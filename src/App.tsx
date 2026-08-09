@@ -39,6 +39,8 @@ import {
   pickFolder,
   checkGitAvailable,
   checkGitIdentity,
+  checkTourOffered,
+  markTourOffered,
   openExternal,
   mergePreview,
   mergeBranch,
@@ -143,7 +145,6 @@ function withTarget(result: CommandResult, target: string): CommandResult {
 }
 
 const LEARNING_MODE_KEY = "gitroot:learningMode";
-const TOUR_OFFERED_KEY = "gitroot:tourOffered:v2";
 
 function loadLearningMode(): boolean {
   const stored = localStorage.getItem(LEARNING_MODE_KEY);
@@ -185,7 +186,10 @@ export default function App() {
     checkGitAvailable()
       .then((info) => setGitAvailable(info.available))
       .catch(() => setGitAvailable(false));
+    // the tour-offered flag moved from localStorage to a file on disk (see checkTourOffered) -
+    // clean up both old keys, they're unused now
     localStorage.removeItem("gitroot:tourOffered");
+    localStorage.removeItem("gitroot:tourOffered:v2");
   }, []);
 
   useEffect(() => {
@@ -301,8 +305,8 @@ export default function App() {
     checkGitIdentity(info.path)
       .then(setGitIdentity)
       .catch(() => setGitIdentity(null));
-    if (localStorage.getItem(TOUR_OFFERED_KEY) === null) {
-      localStorage.setItem(TOUR_OFFERED_KEY, "true");
+    if (!(await checkTourOffered())) {
+      await markTourOffered();
       setShowTourPrompt(true);
     }
   }

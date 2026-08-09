@@ -215,19 +215,19 @@ export default function TourOverlay({ stepIndex, onNext, onBack, onSkip, onFinis
   if (highlighted) {
     const spaceBelow = window.innerHeight - (highlighted.top + highlighted.height) - GAP - MARGIN;
     const spaceAbove = highlighted.top - GAP - MARGIN;
-    const estimatedHeight = Math.max(1, Math.min(cardMaxHeight, Math.max(spaceBelow, spaceAbove)));
 
-    arrowSide = spaceBelow >= estimatedHeight || spaceBelow >= spaceAbove ? "below" : "above";
-    cardTop = arrowSide === "below" ? highlighted.top + highlighted.height + GAP : highlighted.top - GAP - estimatedHeight;
-    // hard clamp - the card can never end up off the top or bottom of the window
-    cardTop = Math.max(MARGIN, Math.min(cardTop, window.innerHeight - MARGIN - estimatedHeight));
+    arrowSide = spaceBelow >= spaceAbove ? "below" : "above";
+    cardTop = arrowSide === "below" ? highlighted.top + highlighted.height + GAP : highlighted.top - GAP - cardMaxHeight;
+    // clamp against the card's real max height (not just the space estimate above), so it can
+    // never render taller than what was clamped for and spill off the top or bottom
+    cardTop = Math.max(MARGIN, Math.min(cardTop, window.innerHeight - MARGIN - cardMaxHeight));
 
     const targetCenterX = highlighted.left + highlighted.width / 2;
     cardLeft = Math.min(Math.max(MARGIN, targetCenterX - CARD_WIDTH / 2), window.innerWidth - CARD_WIDTH - MARGIN);
     arrowLeft = Math.min(Math.max(20, targetCenterX - cardLeft), CARD_WIDTH - 20);
   } else {
     cardLeft = Math.max(MARGIN, (window.innerWidth - CARD_WIDTH) / 2);
-    cardTop = Math.max(MARGIN, window.innerHeight * 0.16);
+    cardTop = Math.max(MARGIN, Math.min(window.innerHeight * 0.16, window.innerHeight - MARGIN - cardMaxHeight));
   }
 
   return (
