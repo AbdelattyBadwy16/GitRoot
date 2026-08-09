@@ -171,6 +171,10 @@ export default function App() {
   const [gitIdentity, setGitIdentity] = useState<GitIdentity | null>(null);
   const [showTourPrompt, setShowTourPrompt] = useState(false);
   const [tourStep, setTourStep] = useState<number | null>(null);
+  // while true, elements that are normally hidden until something makes them relevant (undo,
+  // merge/rebase pickers with only one branch) force-show a preview instead, so the tour always
+  // has something real to point at
+  const touring = tourStep !== null;
 
   const [mergeConfirm, setMergeConfirm] = useState<{ target: string; preview: MergePreview } | null>(null);
   const [rebaseFlow, setRebaseFlow] = useState<{ step: "warning" | "plan"; target: string; preflight: RebasePreflight } | null>(null);
@@ -690,14 +694,16 @@ export default function App() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <AnimatePresence>
-            {lastUndo && (
+            {(lastUndo || touring) && (
               <motion.button
                 key="undo"
+                data-tour="undo-button"
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.9 }}
-                onClick={() => setUndoConfirming(true)}
-                disabled={!!busy}
+                onClick={() => lastUndo && setUndoConfirming(true)}
+                disabled={!!busy || !lastUndo}
+                title={lastUndo ? undefined : "appears here after an action that can be safely undone"}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -709,11 +715,12 @@ export default function App() {
                   color: "var(--lane-4)",
                   fontSize: 12.5,
                   fontWeight: 600,
-                  cursor: busy ? "default" : "pointer",
+                  cursor: busy || !lastUndo ? "default" : "pointer",
+                  opacity: lastUndo ? 1 : 0.55,
                 }}
               >
                 <UndoIcon />
-                {UNDO_LABEL[lastUndo.kind]}
+                {lastUndo ? UNDO_LABEL[lastUndo.kind] : "undo last action"}
               </motion.button>
             )}
           </AnimatePresence>
@@ -803,6 +810,7 @@ export default function App() {
                 onPickRebaseTarget={handlePickRebaseTarget}
                 mergeBusy={!!busy}
                 rebaseBusy={!!busy}
+                touring={touring}
               />
             ) : (
               <div data-tour="graph" style={{ padding: 20 }}>

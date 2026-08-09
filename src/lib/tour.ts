@@ -62,7 +62,7 @@ export const TOUR_STEPS: TourStep[] = [
     ],
   },
   {
-    id: "concept-undo",
+    id: "undo-button",
     title: "you can always undo",
     body: "after most actions, an undo button appears in the header for a while. it reverses exactly what just happened — nothing more.",
     example: [
