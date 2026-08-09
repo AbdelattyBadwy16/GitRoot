@@ -185,6 +185,7 @@ export default function App() {
     checkGitAvailable()
       .then((info) => setGitAvailable(info.available))
       .catch(() => setGitAvailable(false));
+    localStorage.removeItem("gitroot:tourOffered");
   }, []);
 
   useEffect(() => {
