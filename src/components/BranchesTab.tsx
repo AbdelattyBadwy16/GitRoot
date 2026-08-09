@@ -170,7 +170,7 @@ export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPick
 
       {otherBranches.length > 0 && (
         <div style={{ display: "flex", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
-          <div style={{ flex: "1 1 220px", borderRadius: 10, border: "1px solid var(--border)", padding: 14, background: "var(--surface-1)" }}>
+          <div data-tour="merge-picker" style={{ flex: "1 1 220px", borderRadius: 10, border: "1px solid var(--border)", padding: 14, background: "var(--surface-1)" }}>
             <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 4 }}>merge into {current}</div>
             <p style={{ margin: "0 0 10px", fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.4 }}>
               combines another branch's history into {current}.
@@ -218,7 +218,7 @@ export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPick
             </div>
           </div>
 
-          <div style={{ flex: "1 1 220px", borderRadius: 10, border: "1px solid var(--border)", padding: 14, background: "var(--surface-1)" }}>
+          <div data-tour="rebase-picker" style={{ flex: "1 1 220px", borderRadius: 10, border: "1px solid var(--border)", padding: 14, background: "var(--surface-1)" }}>
             <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 4 }}>rebase {current} onto</div>
             <p style={{ margin: "0 0 10px", fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.4 }}>
               replays {current}'s own commits on top of another branch, one at a time.

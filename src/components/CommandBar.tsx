@@ -138,7 +138,6 @@ export default function CommandBar({ onRun, onOpenCommit, commitOpen, busy, lear
 
   return (
     <div
-      data-tour="command-bar"
       style={{
         width: 208,
         padding: 16,
@@ -154,7 +153,13 @@ export default function CommandBar({ onRun, onOpenCommit, commitOpen, busy, lear
       {BUTTONS.map((b) => {
         const active = busy === b.key;
         return (
-          <div key={b.key} style={{ position: "relative" }} onMouseEnter={() => setHovered(b.key)} onMouseLeave={() => setHovered(null)}>
+          <div
+            key={b.key}
+            data-tour={`command-${b.key}`}
+            style={{ position: "relative" }}
+            onMouseEnter={() => setHovered(b.key)}
+            onMouseLeave={() => setHovered(null)}
+          >
             <motion.button
               disabled={!!busy}
               onClick={() => onRun(b.key)}

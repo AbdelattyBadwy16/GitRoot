@@ -143,7 +143,7 @@ function withTarget(result: CommandResult, target: string): CommandResult {
 }
 
 const LEARNING_MODE_KEY = "gitroot:learningMode";
-const TOUR_OFFERED_KEY = "gitroot:tourOffered";
+const TOUR_OFFERED_KEY = "gitroot:tourOffered:v2";
 
 function loadLearningMode(): boolean {
   const stored = localStorage.getItem(LEARNING_MODE_KEY);
@@ -749,7 +749,9 @@ export default function App() {
           >
             switch repo
           </button>
-          <AccountSwitcher repoPath={repo.path} identity={gitIdentity ?? { name: null, email: null }} onIdentityChanged={refreshGitIdentity} />
+          <div data-tour="account-switcher">
+            <AccountSwitcher repoPath={repo.path} identity={gitIdentity ?? { name: null, email: null }} onIdentityChanged={refreshGitIdentity} />
+          </div>
         </div>
       </header>
 
