@@ -5,18 +5,13 @@ import { rebaseProgressText } from "../lib/explain";
 
 interface ConflictDialogProps {
   repoPath: string;
-  // which operation paused - only rebase shows "resolving commit N of M" progress
   kind: "merge" | "rebase";
   target: string;
   onContinue: () => void;
   onAbort: () => void;
-  // true while a continue/abort request is in flight
   busy: boolean;
 }
 
-// the one conflict-pause UI shared by merge and rebase (see DESIGN.md 2.6) - polls the repo
-// itself for the live conflicted-file list (and, for rebase, replay progress) so continue only
-// enables once every unmerged path is actually resolved
 export default function ConflictDialog({ repoPath, kind, target, onContinue, onAbort, busy }: ConflictDialogProps) {
   const [files, setFiles] = useState<string[]>([]);
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
@@ -29,14 +24,12 @@ export default function ConflictDialog({ repoPath, kind, target, onContinue, onA
         const conflicted = await getConflictedFiles(repoPath);
         if (!cancelled) setFiles(conflicted);
       } catch {
-        // repo momentarily unreadable mid-operation - next tick retries
       }
       if (kind === "rebase") {
         try {
           const status = await getRebaseStatus(repoPath);
           if (!cancelled) setProgress(status.inProgress ? { current: status.current, total: status.total } : null);
         } catch {
-          // ignore - stale progress is harmless, the file list is what gates continue
         }
       }
     }

@@ -5,7 +5,6 @@ export interface TourStep {
   body: string;
 }
 
-// the first-run walkthrough - one real UI element per step, in the order a new user would naturally hit them
 export const TOUR_STEPS: TourStep[] = [
   {
     id: "graph",

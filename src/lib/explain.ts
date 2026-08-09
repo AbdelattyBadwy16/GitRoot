@@ -13,7 +13,6 @@ type DictEntry = {
   networkError?: string;
   confirmText?: string;
   conflictPaused?: string;
-  // merge/rebase-only: pre-flight preview and progress wording (see mergePreviewText, rebase*Text below)
   risky?: boolean;
   fastForward?: string;
   clean?: string;
@@ -25,13 +24,10 @@ type DictEntry = {
 
 const dict = dictionary as unknown as Record<string, DictEntry>;
 
-// the four command-bar buttons; CommandBar's dispatch table is keyed on exactly these
 export type CommandName = "pull" | "push" | "stash" | "commit";
 
-// every action that goes through this dictionary
 export type ActionKind = CommandName | "switchBranch" | "createBranch" | "revert" | "undo" | "merge" | "rebase";
 
-// the numeric field each action's `{n}` template counts, when it has one
 const COUNT_FIELD: Partial<Record<ActionKind, string>> = {
   pull: "commits",
   push: "commits",
@@ -42,8 +38,6 @@ const COUNT_FIELD: Partial<Record<ActionKind, string>> = {
   rebase: "commits",
 };
 
-// small standalone template filler for the merge/rebase preview helpers below, which don't have
-// a CommandResult.data to pull from yet - fillTemplate (below) stays the one used post-execution
 function fill(template: string, vars: Record<string, string | number>): string {
   return Object.entries(vars).reduce((s, [k, v]) => s.replaceAll(`{${k}}`, String(v)), template);
 }
@@ -63,7 +57,6 @@ function filesList(data: Record<string, unknown>): string {
   return Array.isArray(files) ? files.join(", ") : "some files";
 }
 
-// how many commits/files this action's `{n}` refers to - also what ActionDiagram animates
 function countFor(kind: ActionKind, result: CommandResult): number {
   const field = COUNT_FIELD[kind];
   return field ? Number(result.data[field] ?? 0) : 0;
@@ -76,12 +69,10 @@ function resultText(kind: ActionKind, result: CommandResult): string {
     return fillTemplate(entry.networkError ?? "couldn't reach {remote} — check your network or VPN connection.", 0, result.data);
   }
   if (result.conflict) {
-    // paused, not failed - merge/rebase stopped with unmerged paths; see ConflictDialog
     const template = entry.conflictPaused ?? "git paused here — resolve the conflicting files, then continue.";
     return fillTemplate(template, 0, result.data).replaceAll("{files}", filesList(result.data));
   }
   if (!result.success) {
-    // not auth/network - surface git's own message instead of a made-up one
     return result.rawStderr?.trim() || "that command didn't succeed.";
   }
   const n = countFor(kind, result);
@@ -92,7 +83,6 @@ function resultText(kind: ActionKind, result: CommandResult): string {
   return fillTemplate(template, n, result.data);
 }
 
-// the step-by-step breakdown; empty on failure since git commands here don't partially apply
 function stepsFor(kind: ActionKind, result: CommandResult): string[] {
   if (!result.success) return [];
   const entry = dict[kind];
@@ -106,14 +96,11 @@ export interface ActionDetails {
   command: string;
   meaning: string;
   result: string;
-  // the numbered "what actually happened" breakdown; see stepsFor
   steps: string[];
-  // the `{n}` this action's steps/result refer to; what ActionDiagram animates
   count: number;
   before: string | null;
   after: string | null;
   isError: boolean;
-  // same names {remote}/{branch}/{from}/{target} resolve to in the text above
   labels: { remote: string; branch: string; from: string; target: string };
 }
 
@@ -126,14 +113,11 @@ function labelsFor(data: Record<string, unknown>): ActionDetails["labels"] {
   };
 }
 
-// the full breakdown the details column shows - the single source of truth for all of it
 export function explainDetails(kind: ActionKind, result: CommandResult): ActionDetails {
   return {
     kind,
     command: result.command,
-    // meaning can carry the same {branch}/{target}/{from} placeholders result/steps do (e.g.
-    // merge's "combines {target}'s history into {branch}.") - fill it the same way, or it shows
-    // the literal placeholder text instead of the real branch names
+    // important: must fill the template here too, or text like {branch} show up as it is
     meaning: fillTemplate(dict[kind].meaning, countFor(kind, result), result.data),
     result: resultText(kind, result),
     steps: stepsFor(kind, result),
@@ -145,15 +129,12 @@ export function explainDetails(kind: ActionKind, result: CommandResult): ActionD
   };
 }
 
-// confirm-before-running text for reverting to an earlier commit
 export function revertConfirmText(n: number, target: string): string {
   const entry = dict.revert;
   const template = entry.confirmText ?? "this can't be undone through the app. continue?";
   return fillTemplate(template, n, { target });
 }
 
-// merge's three possible outcomes, straight from `git merge-tree` - shown in the confirm step
-// before the real merge runs (see DESIGN.md 2.6)
 export function mergePreviewText(outcome: "fastForward" | "clean" | "conflict", commits: number, branch: string, target: string, files: string[]): string {
   const entry = dict.merge;
   const s = commits === 1 ? "" : "s";
@@ -162,19 +143,15 @@ export function mergePreviewText(outcome: "fastForward" | "clean" | "conflict", 
   return fill(entry.wouldConflict ?? "", { branch, target, files: files.join(", ") });
 }
 
-// the strong warning shown when any commit about to be rebased already exists on the remote -
-// has to be confirmed before the plan preview even shows (see DESIGN.md 2.6)
 export function rebaseAlreadyPushedWarning(): string {
   return dict.rebase.alreadyPushedWarning ?? "some of these commits are already on your remote. continue?";
 }
 
-// "this will replay N commits from X onto Y..." - shown after the already-pushed check clears
 export function rebasePlanText(commits: number, branch: string, target: string): string {
   const s = commits === 1 ? "" : "s";
   return fill(dict.rebase.plan ?? "", { n: commits, s, branch, target });
 }
 
-// "resolving commit 2 of 4..." - polled live while a rebase runs or sits paused on a conflict
 export function rebaseProgressText(current: number, total: number): string {
   return fill(dict.rebase.progress ?? "", { current, total });
 }

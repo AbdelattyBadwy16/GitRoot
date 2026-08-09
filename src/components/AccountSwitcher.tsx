@@ -5,7 +5,6 @@ import { avatarUrl, loadProfiles, saveProfiles, newProfileId, type GitProfile } 
 
 interface AccountSwitcherProps {
   repoPath: string;
-  // git's actual current identity - the single source of truth for which saved profile (if any) is "active"
   identity: GitIdentity;
   onIdentityChanged: () => void;
 }
@@ -13,10 +12,6 @@ interface AccountSwitcherProps {
 type FormState = { label: string; name: string; email: string; githubUsername: string };
 const EMPTY_FORM: FormState = { label: "", name: "", email: "", githubUsername: "" };
 
-// header avatar + dropdown for switching between saved name/email profiles. purely cosmetic: it
-// only ever calls setGitIdentity (git config --global user.name/user.email), same as
-// GitIdentityPrompt - it can't change which GitHub account push/pull authenticates as (see
-// profiles.ts for why, and the form's own disclaimer below).
 export default function AccountSwitcher({ repoPath, identity, onIdentityChanged }: AccountSwitcherProps) {
   const [profiles, setProfiles] = useState<GitProfile[]>(loadProfiles);
   const [open, setOpen] = useState(false);
@@ -27,8 +22,6 @@ export default function AccountSwitcher({ repoPath, identity, onIdentityChanged 
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // derived live from git's real identity, not stored separately - can't drift if the identity
-  // changes outside the app (terminal, another tool, editing a profile that's currently active)
   const activeProfile = profiles.find((p) => p.name === identity.name && p.email === identity.email) ?? null;
   const hasUnsavedIdentity = !!(identity.name && identity.email && !activeProfile);
 
@@ -98,7 +91,6 @@ export default function AccountSwitcher({ repoPath, identity, onIdentityChanged 
       const wasActive = activeProfile?.id === editingId;
       persist(profiles.map((p) => (p.id === editingId ? { ...p, label, name, email, githubUsername } : p)));
       if (wasActive) {
-        // keep git's actual config matching the profile that was just edited while it was active
         try {
           await setGitIdentity(repoPath, name, email);
           onIdentityChanged();
@@ -275,7 +267,6 @@ export default function AccountSwitcher({ repoPath, identity, onIdentityChanged 
   );
 }
 
-// GitHub avatar when the profile has a username, otherwise a colored initial - never a broken-image icon
 function Avatar({ profile, fallbackLabel, size }: { profile: GitProfile | null; fallbackLabel: string | null | undefined; size: number }) {
   const url = avatarUrl(profile?.githubUsername);
   const [errored, setErrored] = useState(false);

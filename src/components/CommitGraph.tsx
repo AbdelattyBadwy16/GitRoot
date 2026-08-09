@@ -5,22 +5,18 @@ import { isHead } from "../lib/graph";
 
 interface CommitGraphProps {
   graph: CommitGraphData;
-  // commit to auto-highlight for a moment, e.g. the new HEAD right after a push
   pulseHash?: string | null;
-  // true if there's more history past graph.commits (see log.rs)
   hasMore?: boolean;
   loadingMore?: boolean;
-  // fires when the user scrolls near the bottom of the loaded history
   onLoadMore?: () => void;
-  // fires when an eligible commit (an ancestor of HEAD) is clicked; commitsAfter is an estimate for the confirm dialog text
   onRevertClick?: (targetHash: string, commitsAfter: number) => void;
 }
 
 const ROW_HEIGHT = 60;
 const LANE_WIDTH = 32;
-const LANE_X0 = 24; // left padding before lane 0
+const LANE_X0 = 24;
 const NODE_RADIUS = 7.5;
-const MERGE_SIZE = 15; // square side (pre-rotation) for the merge "knot"
+const MERGE_SIZE = 15;
 const TOP_PADDING = 30;
 
 const LANE_COLORS = [
@@ -46,7 +42,6 @@ function rowY(row: number): number {
   return TOP_PADDING + row * ROW_HEIGHT;
 }
 
-// deterministic pseudo-random in [0, 1) from a string, so each edge's wobble stays stable across re-renders
 function seededUnit(key: string): number {
   let h = 2166136261;
   for (let i = 0; i < key.length; i++) {
@@ -56,7 +51,6 @@ function seededUnit(key: string): number {
   return ((h >>> 0) % 1000) / 1000;
 }
 
-// curved connector path, bowed by a stable per-edge seed instead of running ruler-straight
 function edgePath(edge: GraphEdge): string {
   const x1 = laneX(edge.fromLane);
   const y1 = rowY(edge.fromRow);
@@ -70,7 +64,6 @@ function edgePath(edge: GraphEdge): string {
   return `M ${x1} ${y1} C ${x1 + wobble * 0.5} ${midY}, ${x2 - wobble * 0.5} ${midY}, ${x2} ${y2}`;
 }
 
-// turns a raw git ref string like "HEAD -> main" into a label plus whether it's HEAD
 function parseRef(r: string): { label: string; head: boolean } {
   if (r === "HEAD") return { label: "HEAD (detached)", head: true };
   if (r.startsWith("HEAD -> ")) return { label: r.slice(8), head: true };
@@ -89,7 +82,6 @@ function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
-// renders the commit DAG as glowing vines with round "buds" for commits and diamond "knots" for merges; hovering one traces its full ancestor/descendant thread
 export default function CommitGraph({
   graph,
   pulseHash = null,
@@ -100,10 +92,8 @@ export default function CommitGraph({
 }: CommitGraphProps) {
   const [hoveredHash, setHoveredHash] = useState<string | null>(null);
   const reducedMotion = usePrefersReducedMotion();
-  // manual hover wins over the programmatic pulse
   const activeHash = hoveredHash ?? pulseHash;
 
-  // triggers onLoadMore a bit before the sentinel is actually visible
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!hasMore || !onLoadMore) return;
@@ -133,7 +123,6 @@ export default function CommitGraph({
 
   const headHash = useMemo(() => graph.commits.find(isHead)?.hash ?? null, [graph]);
 
-  // every branch/remote tip visible on this page, deduped by label and colored by its lane
   const branchTips = useMemo(() => {
     const seen = new Map<string, { color: string; head: boolean }>();
     for (const c of graph.commits) {
@@ -145,7 +134,6 @@ export default function CommitGraph({
     return Array.from(seen.entries());
   }, [graph]);
 
-  // ancestors of HEAD - "revert to here" only makes sense for a commit actually in HEAD's own history
   const headAncestors = useMemo(() => {
     const seen = new Set<string>();
     if (!headHash) return seen;
@@ -178,7 +166,6 @@ export default function CommitGraph({
     return seen;
   }
 
-  // every commit reachable from the active one, walking both parents and children
   const spotlight = useMemo(() => {
     if (!activeHash) return null;
     const seen = new Set<string>([activeHash]);
@@ -293,7 +280,6 @@ export default function CommitGraph({
                 <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
-            {/* soft per-lane color wash, replacing a plain gridline */}
             {Array.from({ length: graph.laneCount }, (_, lane) => (
               <linearGradient key={`wash-${lane}`} id={`gitroot-wash-${lane}`} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={laneColor(lane)} stopOpacity={0} />
@@ -322,11 +308,9 @@ export default function CommitGraph({
               const color = laneColor(edge.fromLane);
               const key = `${edge.from}->${edge.to}`;
               const seed = seededUnit(key);
-              // dashed while the child (from) commit hasn't reached the remote yet
               const pushed = byHash.get(edge.from)?.onRemote ?? true;
               return (
                 <g key={key}>
-                  {/* outer glow halo */}
                   <motion.path
                     d={d}
                     fill="none"
@@ -338,7 +322,6 @@ export default function CommitGraph({
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.4 }}
                   />
-                  {/* pushed segments grow into place; unpushed ones just fade in */}
                   {pushed ? (
                     <motion.path
                       d={d}
@@ -363,7 +346,6 @@ export default function CommitGraph({
                       transition={{ duration: 0.35 }}
                     />
                   )}
-                  {/* particles only run for the actively-hovered thread, not every edge - keeps a big page cheap at rest */}
                   {!reducedMotion && spotlight && lit && pushed && (
                     <>
                       <circle r={1.6 + seed * 1.3} fill="#fff" opacity={0.85}>
@@ -417,7 +399,6 @@ export default function CommitGraph({
                   cursor: revertEligible ? "pointer" : "default",
                 }}
               >
-                {/* Row spotlight backdrop */}
                 <motion.div
                   animate={{
                     opacity: activeHash === commit.hash ? 1 : 0,
@@ -444,7 +425,6 @@ export default function CommitGraph({
                   />
                 )}
 
-                {/* round bud for a normal commit, diamond knot for a merge */}
                 <motion.div
                   animate={{ opacity: lit ? 1 : 0.28, scale: lit ? 1 : 0.88, rotate: merge ? 45 : 0 }}
                   transition={{ duration: 0.15 }}
@@ -455,7 +435,6 @@ export default function CommitGraph({
                     width: nodeSize,
                     height: nodeSize,
                     borderRadius: merge ? 4 : "50%",
-                    // hollow outline until the commit is actually on the remote
                     backgroundColor: commit.onRemote ? color : "var(--surface-0)",
                     backgroundImage: commit.onRemote
                       ? `radial-gradient(circle at 32% 30%, color-mix(in srgb, ${color} 45%, white 55%), ${color})`
@@ -488,7 +467,6 @@ export default function CommitGraph({
                         {commit.refs.map((raw) => {
                           const { label, head: isHeadRef } = parseRef(raw);
                           return (
-                            // layoutId makes this pill glide to its new position instead of popping in (e.g. "main" after a push)
                             <motion.span
                               key={raw}
                               layout
@@ -567,7 +545,6 @@ export default function CommitGraph({
         </AnimatePresence>
       </div>
 
-      {/* invisible sentinel that triggers onLoadMore; becomes a status line once there's something to say */}
       <div ref={sentinelRef} style={{ textAlign: "center", padding: "14px 0", fontSize: 12, color: "var(--text-muted)" }}>
         {loadingMore ? "loading more history…" : !hasMore ? "— beginning of history —" : null}
       </div>

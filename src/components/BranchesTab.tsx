@@ -7,16 +7,12 @@ interface BranchesTabProps {
   onSwitch: (name: string) => void;
   onCreate: (name: string, startPoint: string) => void;
   busy: boolean;
-  // merge/rebase are heavier flows (preview, confirm, possibly a conflict pause) - App.tsx owns
-  // that state machine, this tab just reports which target branch was picked
   onPickMergeTarget: (branch: string) => void;
   onPickRebaseTarget: (branch: string) => void;
   mergeBusy: boolean;
   rebaseBusy: boolean;
 }
 
-// every local branch, switchable with a click, plus forms for creating one, merging one in, or
-// rebasing the current branch onto one
 export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPickMergeTarget, onPickRebaseTarget, mergeBusy, rebaseBusy }: BranchesTabProps) {
   const current = branches.find((b) => b.isCurrent)?.name ?? branches[0]?.name ?? "";
   const [newName, setNewName] = useState("");
@@ -24,11 +20,9 @@ export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPick
   const otherBranches = branches.filter((b) => !b.isCurrent);
   const [mergeTarget, setMergeTarget] = useState(otherBranches[0]?.name ?? "");
   const [rebaseTarget, setRebaseTarget] = useState(otherBranches[0]?.name ?? "");
-  // falls back to the first available branch if the picked one disappeared (deleted elsewhere, or just switched to)
   const effectiveMergeTarget = otherBranches.some((b) => b.name === mergeTarget) ? mergeTarget : otherBranches[0]?.name ?? "";
   const effectiveRebaseTarget = otherBranches.some((b) => b.name === rebaseTarget) ? rebaseTarget : otherBranches[0]?.name ?? "";
 
-  // default start point follows the current branch until the user picks one themselves
   const [startPointTouched, setStartPointTouched] = useState(false);
   const effectiveStartPoint = startPointTouched ? startPoint : current;
 

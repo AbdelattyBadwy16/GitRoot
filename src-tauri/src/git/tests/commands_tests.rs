@@ -1,6 +1,5 @@
 use super::*;
 
-// temp repo + bare remote, so push/pull have something real to talk to
 struct TestRepo {
     dir: std::path::PathBuf,
     path: String,
@@ -8,7 +7,7 @@ struct TestRepo {
 
 impl TestRepo {
     fn new() -> Self {
-        // counter avoids pid+nanos collisions when tests run in parallel
+        // this counter stop name clash when tests run in parallel
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let unique = format!(
@@ -80,8 +79,7 @@ impl TestRepo {
         run_git(&self.path, args).unwrap()
     }
 
-    // writes a brand-new file and commits it - `commit -am` only stages *tracked* changes, so a
-    // new file needs an explicit `add` first; this is the merge/rebase tests' most common setup step
+    // note: this need explicit add, "commit -am" only work for files git already know about
     fn commit_new_file(&self, name: &str, contents: &str, message: &str) {
         self.write(name, contents);
         let out = self.git(&["add", name]);
@@ -119,7 +117,6 @@ fn staging_toggles_the_real_index() {
 fn file_diff_covers_untracked_unstaged_and_staged() {
     let repo = TestRepo::new();
 
-    // untracked: no history to diff against, shows as newly added
     repo.write("new.txt", "hello\n");
     let diff = file_diff_sync(repo.path.clone(), "new.txt".to_string(), false).unwrap();
     assert!(diff.contains("new file mode"), "diff was: {diff}");
@@ -129,7 +126,6 @@ fn file_diff_covers_untracked_unstaged_and_staged() {
     let diff = file_diff_sync(repo.path.clone(), "README.md".to_string(), false).unwrap();
     assert!(diff.contains("+modified"), "diff was: {diff}");
 
-    // staged edit shows via --cached; plain diff on the same file is now empty
     stage_file_sync(repo.path.clone(), "README.md".to_string()).unwrap();
     let staged_diff = file_diff_sync(repo.path.clone(), "README.md".to_string(), true).unwrap();
     assert!(staged_diff.contains("+modified"), "diff was: {staged_diff}");
@@ -142,7 +138,6 @@ fn commit_requires_staged_files_and_reports_count_and_branch() {
     let repo = TestRepo::new();
     repo.write("a.txt", "content\n");
 
-    // nothing staged yet - should fail, not create an empty commit
     let result = commit_sync(repo.path.clone(), "should not commit".to_string()).unwrap();
     assert!(!result.success);
     assert!(!result.auth_error);
@@ -162,7 +157,7 @@ fn commit_requires_staged_files_and_reports_count_and_branch() {
 fn stash_saves_tracked_changes_but_not_untracked() {
     let repo = TestRepo::new();
     repo.write("README.md", "hello\nmodified\n");
-    repo.write("scratch.txt", "wip\n"); // untracked, shouldn't be stashed
+    repo.write("scratch.txt", "wip\n");
 
     let result = stash_sync(repo.path.clone()).unwrap();
     assert!(result.success);
@@ -195,7 +190,6 @@ fn pull_reports_zero_when_already_up_to_date() {
 fn push_then_pull_round_trip_reports_real_commit_counts() {
     let repo_a = TestRepo::new();
 
-    // second clone of the same remote, simulating a collaborator
     let clone_dir = repo_a.dir.join("repo-b");
     let out = std::process::Command::new("git")
         .args([
@@ -258,8 +252,6 @@ fn push_then_pull_round_trip_reports_real_commit_counts() {
     assert_eq!(push_result.data["after"], local_head);
 }
 
-// clones repo's remote as a "collaborator" and pushes a conflicting edit to README.md - sets up
-// the shared scenario the two pull-conflict tests below both need
 fn push_conflicting_readme_edit_from_a_collaborator(repo: &TestRepo) {
     let clone_dir = repo.dir.join("repo-b");
     let out = std::process::Command::new("git")
@@ -305,7 +297,6 @@ fn pull_pauses_on_merge_conflict_instead_of_reporting_a_dead_end_error() {
     let repo = TestRepo::new();
     push_conflicting_readme_edit_from_a_collaborator(&repo);
 
-    // a local, unpushed commit on the same line - pull's implicit merge will conflict with it
     repo.write("README.md", "hello\nfrom a\n");
     stage_file_sync(repo.path.clone(), "README.md".to_string()).unwrap();
     commit_sync(repo.path.clone(), "a edits readme".to_string()).unwrap();
@@ -325,7 +316,6 @@ fn pull_pauses_on_merge_conflict_instead_of_reporting_a_dead_end_error() {
         .join(".git/MERGE_HEAD")
         .exists());
 
-    // the same continue/abort machinery merge_branch's conflicts use must work here too
     repo.write("README.md", "resolved\n");
     repo.git(&["add", "README.md"]);
     let finished = continue_merge_sync(repo.path.clone()).unwrap();
@@ -334,9 +324,6 @@ fn pull_pauses_on_merge_conflict_instead_of_reporting_a_dead_end_error() {
 
 #[test]
 fn pull_forces_merge_semantics_even_when_pull_rebase_is_configured_globally() {
-    // modern git refuses a plain `pull` on divergent branches at all without an explicit
-    // reconcile strategy - pull_sync pins --no-rebase so it's never at the mercy of whatever the
-    // user's own global config says, and the resulting conflict (if any) is always a plain merge
     let repo = TestRepo::new();
     repo.git(&["config", "pull.rebase", "true"]);
     push_conflicting_readme_edit_from_a_collaborator(&repo);
@@ -358,7 +345,6 @@ fn pull_forces_merge_semantics_even_when_pull_rebase_is_configured_globally() {
         .join(".git/rebase-merge")
         .exists());
 
-    // abort_merge is the correct escape hatch here, same as any other merge conflict
     abort_merge_sync(&repo.path).unwrap();
     assert!(!std::path::Path::new(&repo.path)
         .join(".git/MERGE_HEAD")
@@ -367,7 +353,7 @@ fn pull_forces_merge_semantics_even_when_pull_rebase_is_configured_globally() {
 
 #[test]
 fn push_sets_upstream_automatically_for_a_brand_new_branch() {
-    // bug: push used to fail outright on a branch with no upstream yet
+    // this test is for a bug where push failed on branch with no upstream
     let repo = TestRepo::new();
     repo.git(&["checkout", "-q", "-b", "feature"]);
     repo.write("feature.txt", "new stuff\n");
@@ -421,7 +407,6 @@ fn fingerprint_changes_on_commits_edits_and_branch_switches_only() {
     let f2 = repo_fingerprint_sync(repo.path.clone()).unwrap();
     assert_ne!(f1, f2);
 
-    // branch name is part of the fingerprint too, not just the commit hash
     repo.git(&["checkout", "-q", "-b", "other"]);
     let f3 = repo_fingerprint_sync(repo.path.clone()).unwrap();
     assert_ne!(f2, f3);
@@ -551,7 +536,6 @@ fn switch_branch_fails_safely_instead_of_discarding_uncommitted_changes() {
     repo.git(&["add", "README.md"]);
     repo.git(&["commit", "-q", "-m", "change readme on feature"]);
     repo.git(&["checkout", "-q", "main"]);
-    // uncommitted edit that conflicts with feature's committed version
     repo.write("README.md", "uncommitted conflicting edit\n");
 
     let result = switch_branch_sync(repo.path.clone(), "feature".to_string()).unwrap();
@@ -654,7 +638,6 @@ fn revert_to_commit_backs_out_cleanly_instead_of_leaving_a_mid_revert_state() {
     stage_file_sync(repo.path.clone(), "a.txt".to_string()).unwrap();
     commit_sync(repo.path.clone(), "add a".to_string()).unwrap();
 
-    // dirty working tree on the exact file the revert needs to touch
     repo.write("a.txt", "uncommitted, in the way\n");
 
     let result = revert_to_commit_sync(repo.path.clone(), target).unwrap();
@@ -684,7 +667,6 @@ fn stage_hunk_and_discard_hunk_operate_independently() {
     stage_file_sync(repo.path.clone(), "f.txt".to_string()).unwrap();
     commit_sync(repo.path.clone(), "add f".to_string()).unwrap();
 
-    // far enough apart to stay two hunks, not merge into one
     let mut edited = lines.clone();
     edited[1] = "line2-CHANGED".to_string();
     edited[17] = "line18-CHANGED".to_string();
@@ -781,7 +763,7 @@ fn stage_hunk_lines_stages_only_the_selected_lines_within_one_hunk() {
         result.hunks
     );
     let hunk = &result.hunks[0];
-    // index 0 is the "@@" header, content lines start at 1
+    // index 0 is the "@@" line, real content start at index 1
     assert_eq!(hunk.lines().nth(2).unwrap(), "+NEW1");
     assert_eq!(hunk.lines().nth(3).unwrap(), "+NEW2");
     assert_eq!(hunk.lines().nth(4).unwrap(), "+NEW3");
@@ -1250,7 +1232,6 @@ fn merge_preview_names_the_conflicting_files_without_touching_the_working_tree()
     assert_eq!(preview.outcome, "conflict");
     assert_eq!(preview.files, vec!["README.md".to_string()]);
 
-    // merge-tree is plumbing - the working tree and index must be untouched afterward
     let status = repo.git(&["status", "--porcelain"]);
     assert!(
         status.stdout.is_empty(),
@@ -1282,7 +1263,7 @@ fn merge_branch_fast_forwards_without_creating_a_merge_commit() {
         "a fast-forward just moves the pointer to feature's tip"
     );
     let parents = repo.git(&["rev-list", "--parents", "-1", "HEAD"]).stdout;
-    // rev-list --parents prints "<commit> <parent>..." - the commit itself plus one parent means a normal, non-merge commit
+    // rev-list --parents also print the commit itself, so 2 means 1 real parent
     assert_eq!(
         parents.trim().split(' ').count(),
         2,
@@ -1303,7 +1284,7 @@ fn merge_branch_creates_a_merge_commit_when_both_sides_diverged_cleanly() {
     assert_eq!(result.data["fastForward"], false);
 
     let parents = repo.git(&["rev-list", "--parents", "-1", "HEAD"]).stdout;
-    // "<commit> <parent1> <parent2>" - three tokens for a real two-parent merge commit
+    // same here, 3 means 2 real parents so it is a real merge commit
     assert_eq!(
         parents.trim().split(' ').count(),
         3,
@@ -1334,7 +1315,6 @@ fn merge_branch_pauses_on_conflict_and_continue_merge_finishes_it_once_resolved(
         .join(".git/MERGE_HEAD")
         .exists());
 
-    // still unresolved - continue must refuse
     let blocked = continue_merge_sync(repo.path.clone()).unwrap();
     assert!(
         blocked.conflict,
@@ -1410,7 +1390,6 @@ fn rebase_preflight_detects_commits_already_pushed_to_the_remote_tracking_branch
     repo.commit_new_file("f1.txt", "1\n", "f1");
     repo.commit_new_file("f2.txt", "1\n", "f2");
     repo.git(&["push", "-q", "-u", "origin", "feature"]);
-    // a third commit made after pushing - this one is still only local
     repo.commit_new_file("f3.txt", "1\n", "f3 not pushed yet");
 
     repo.git(&["checkout", "-q", "main"]);

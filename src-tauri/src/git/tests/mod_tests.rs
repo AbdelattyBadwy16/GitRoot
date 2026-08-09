@@ -15,7 +15,7 @@ fn recognizes_timeouts_and_connection_failures_as_network_not_auth() {
 
 #[test]
 fn hard_timeout_kills_a_hung_git_process() {
-    // ext:: fakes a hung remote by running `sleep` as the transport
+    // ext:: run "sleep" as a fake remote, so it looks like it hang
     let dir = std::env::temp_dir().join(format!(
         "gitroot-timeout-test-{}-{}",
         std::process::id(),
@@ -44,7 +44,7 @@ fn hard_timeout_kills_a_hung_git_process() {
     git(&["config", "user.email", "test@example.com"]);
     git(&["config", "user.name", "Test"]);
     git(&["remote", "add", "origin", "ext::sleep 120"]);
-    // ext:: transports are blocked by default; allow it just for this test
+    // ext:: is blocked by default, need to allow it here
     git(&["config", "protocol.ext.allow", "always"]);
 
     let start = Instant::now();
@@ -58,7 +58,6 @@ fn hard_timeout_kills_a_hung_git_process() {
         "stderr was: {}",
         result.stderr
     );
-    // got control back near the 2s timeout, not after the real 120s sleep
     assert!(
         elapsed < Duration::from_secs(10),
         "took {elapsed:?} — timeout did not actually bound the wait"
@@ -80,7 +79,7 @@ fn temp_dir(label: &str) -> std::path::PathBuf {
 
 #[test]
 fn current_branch_name_works_before_the_first_commit() {
-    // bug: rev-parse --abbrev-ref HEAD fails on a repo with zero commits
+    // this test is for a bug where rev-parse fail on repo with zero commit
     let dir = temp_dir("branch-name-test");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.to_string_lossy().to_string();
@@ -190,7 +189,6 @@ fn clone_repo_creates_a_named_subfolder_with_real_history() {
     std::fs::create_dir_all(&dest_dir).unwrap();
     let remote_path = remote_dir.to_string_lossy().to_string();
 
-    // seed the remote with one real commit
     let seed_dir = dir.join("seed");
     std::fs::create_dir_all(&seed_dir).unwrap();
     let seed_path = seed_dir.to_string_lossy().to_string();
@@ -222,7 +220,6 @@ fn clone_repo_creates_a_named_subfolder_with_real_history() {
     git(&seed_path, &["push", "-q", "-u", "origin", "HEAD:main"]);
 
     let dest_path = dest_dir.to_string_lossy().to_string();
-    // "remote.git" -> repo name "remote", same rule repo_name_from_url uses
     let info =
         clone_repo_sync(remote_path.clone(), dest_path.clone()).expect("clone should succeed");
     assert_eq!(info.name, "remote");
@@ -283,8 +280,8 @@ fn check_git_identity_reads_the_repo_s_configured_name_and_email() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-// note: set_git_identity_sync itself isn't exercised here - it writes to the real global
-// ~/.gitconfig, and a test run on a developer's own machine must never touch that for real
+// important: we do not test set_git_identity_sync here, because it write to the real
+// ~/.gitconfig on your machine, and a test must never touch that for real
 #[test]
 fn git_config_value_returns_none_for_a_key_that_was_never_set() {
     let dir = temp_dir("identity-unset-test");

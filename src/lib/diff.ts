@@ -3,7 +3,6 @@ export interface DiffLine {
   text: string;
 }
 
-// strips file-header noise and classifies each line so it can be styled
 export function parseDiff(raw: string): DiffLine[] {
   const lines: DiffLine[] = [];
   for (const line of raw.split("\n")) {

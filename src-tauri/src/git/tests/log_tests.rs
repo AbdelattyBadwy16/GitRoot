@@ -2,8 +2,6 @@ use super::*;
 use std::collections::HashSet;
 use std::process::Command as StdCommand;
 
-// real repo with a fork + merge, so layout is tested against an actual
-// branch/merge, not just a straight line
 fn build_test_repo() -> String {
     let dir = std::env::temp_dir().join(format!(
         "gitroot-log-test-{}-{}",
@@ -60,10 +58,9 @@ fn lays_out_a_merge_without_overlap_and_keeps_mainline_straight() {
     let repo = build_test_repo();
     let graph = commit_graph_sync(repo.clone(), 1000).expect("commit_graph should succeed");
 
-    // 4 commits: base, feature work, main work, merge
     assert_eq!(graph.commits.len(), 4);
 
-    // no two commits may share a (lane, row) - that's an overlap on screen
+    // two commits with same lane and row would overlap on screen, that is not allowed
     let mut seen: HashSet<(usize, usize)> = HashSet::new();
     for c in &graph.commits {
         assert!(
@@ -74,7 +71,7 @@ fn lays_out_a_merge_without_overlap_and_keeps_mainline_straight() {
         );
     }
 
-    assert_eq!(graph.edges.len(), 4); // base->none, feature->base, main->base, merge->{main,feature}
+    assert_eq!(graph.edges.len(), 4);
 
     let merge = graph
         .commits
@@ -84,8 +81,7 @@ fn lays_out_a_merge_without_overlap_and_keeps_mainline_straight() {
     let by_hash: std::collections::HashMap<&str, &GraphCommit> =
         graph.commits.iter().map(|c| (c.hash.as_str(), c)).collect();
     let first_parent = by_hash[merge.parents[0].as_str()];
-    // git convention: first parent is the branch you were on, so the
-    // mainline should continue straight down in the same lane
+    // by git convention first parent is the branch you was on, so it should stay in same lane
     assert_eq!(merge.lane, first_parent.lane);
 
     assert!(
@@ -98,8 +94,7 @@ fn lays_out_a_merge_without_overlap_and_keeps_mainline_straight() {
 
 #[test]
 fn stashed_changes_never_appear_as_graph_nodes() {
-    // `git stash` creates real commit objects reachable only via
-    // refs/stash - the graph must not pull those in as history
+    // git stash make real commits too, graph must not show them as history
     let repo = build_test_repo();
 
     let git = |args: &[&str]| {
@@ -140,8 +135,6 @@ fn stashed_changes_never_appear_as_graph_nodes() {
 
 #[test]
 fn distinguishes_pushed_commits_from_local_only_ones() {
-    // base -> pushed  (both local main and origin/main point here)
-    //      -> local   (committed, never pushed)
     let dir = std::env::temp_dir().join(format!(
         "gitroot-log-remote-test-{}-{}",
         std::process::id(),
@@ -261,8 +254,6 @@ fn pages_a_long_history_without_reshuffling_earlier_lanes() {
     assert_eq!(full.commits.len(), 25);
     assert!(!full.has_more);
 
-    // every commit on page 1 must land on the same (lane, row) once the
-    // page grows, or "load more" would visibly reshuffle the screen
     let page1_positions: HashMap<&str, (usize, usize)> = page1
         .commits
         .iter()

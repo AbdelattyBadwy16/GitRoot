@@ -9,7 +9,6 @@ interface ActionDiagramProps {
   remote: string;
   from: string;
   target: string;
-  // real before/after facts from Rust - for switchBranch this is the only way to know where it came from
   before: string | null;
   after: string | null;
 }
@@ -105,7 +104,6 @@ function Zone({ x, icon, title, sublabel, color, highlight }: { x: number; icon:
   );
 }
 
-// two zones with particles flowing between them, colored by the side they came from
 function FlowDiagram({
   left,
   right,
@@ -175,7 +173,6 @@ function BranchPill({ label, color, muted }: { label: string; color: string; mut
   );
 }
 
-// pointer gliding between branches (switchBranch), or a new pill scaling in (createBranch)
 function PointerDiagram({ fromLabel, toLabel, isNew }: { fromLabel: string; toLabel: string; isNew: boolean }) {
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: W, height: H, padding: "0 2px" }}>
@@ -198,7 +195,6 @@ function PointerDiagram({ fromLabel, toLabel, isNew }: { fromLabel: string; toLa
   );
 }
 
-// shows the undone commits struck through, the new revert commit, and a "nothing deleted" note
 function UndoDiagram({ target, count }: { target: string; count: number }) {
   const shown = Math.min(count, 4);
   return (
@@ -243,7 +239,6 @@ function UndoDiagram({ target, count }: { target: string; count: number }) {
   );
 }
 
-// the previous state fading out and the restored one taking over - no claim about *how* (reset vs revert), just what changed
 function RewindDiagram({ beforeLabel, afterLabel }: { beforeLabel: string; afterLabel: string }) {
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: W, height: H, padding: "0 2px" }}>
@@ -261,7 +256,6 @@ function RewindDiagram({ beforeLabel, afterLabel }: { beforeLabel: string; after
   );
 }
 
-// the details column's picture for whichever action just ran, in the commit graph's own visual language
 export default function ActionDiagram({ kind, count, branch, remote, from, target, before, after }: ActionDiagramProps) {
   switch (kind) {
     case "pull":

@@ -2,7 +2,6 @@ use super::run_git;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 
-// one commit before any layout is computed
 struct RawCommit {
     hash: String,
     parents: Vec<String>,
@@ -12,7 +11,6 @@ struct RawCommit {
     refs: Vec<String>,
 }
 
-// a commit positioned on the graph: row 0 = newest, growing downward
 #[derive(Debug, Serialize, Clone)]
 pub struct GraphCommit {
     pub hash: String,
@@ -23,11 +21,9 @@ pub struct GraphCommit {
     pub refs: Vec<String>,
     pub lane: usize,
     pub row: usize,
-    // true if reachable from a remote-tracking branch, i.e. actually pushed (always true when there's no remote)
     pub on_remote: bool,
 }
 
-// a line from a commit to one parent; frontend decides straight vs curved
 #[derive(Debug, Serialize)]
 pub struct GraphEdge {
     pub from: String,
@@ -43,18 +39,14 @@ pub struct CommitGraphData {
     pub commits: Vec<GraphCommit>,
     pub edges: Vec<GraphEdge>,
     pub lane_count: usize,
-    // true if there's more history past `commits` - read a page at a time, not all at once
     pub has_more: bool,
 }
 
-// assigns each commit a lane, reusing/freeing lanes as branches fork and merge - mirrors git log --graph, requires topo order
 fn assign_lanes(commits: &[RawCommit]) -> Vec<(usize, usize)> {
-    // lanes[i] = Some(hash) this lane is waiting to place, or None if free
     let mut lanes: Vec<Option<String>> = Vec::new();
     let mut positions: Vec<(usize, usize)> = Vec::with_capacity(commits.len());
 
     for (row, commit) in commits.iter().enumerate() {
-        // lanes already waiting for this commit - normally one, but a merge point can have two
         let waiting: Vec<usize> = lanes
             .iter()
             .enumerate()
@@ -72,20 +64,17 @@ fn assign_lanes(commits: &[RawCommit]) -> Vec<(usize, usize)> {
             lanes.len() - 1
         };
 
-        // any other lane waiting for this commit has now converged - free it
         for &other in waiting.iter().skip(1) {
             lanes[other] = None;
         }
 
         positions.push((lane, row));
 
-        // point this lane at whatever it should wait for next
         match commit.parents.first() {
-            None => lanes[lane] = None, // root commit, nothing more upstream
+            None => lanes[lane] = None,
             Some(first_parent) => lanes[lane] = Some(first_parent.clone()),
         }
 
-        // extra parents (merges) each need their own lane unless already tracked
         for extra_parent in commit.parents.iter().skip(1) {
             let already_tracked = lanes
                 .iter()
@@ -104,7 +93,6 @@ fn assign_lanes(commits: &[RawCommit]) -> Vec<(usize, usize)> {
     positions
 }
 
-// commits reachable from any remote-tracking ref (i.e. actually pushed); everything counts as on-remote if there are no remotes
 fn commits_reachable_from_remotes(
     repo_path: &str,
     raw: &[RawCommit],
@@ -127,19 +115,17 @@ fn commits_reachable_from_remotes(
     let mut stack: Vec<&str> = tip_hashes;
     while let Some(hash) = stack.pop() {
         if !reachable.insert(hash.to_string()) {
-            continue; // already visited via another path
+            continue;
         }
         if let Some(&i) = index_by_hash.get(hash) {
             for parent in &raw[i].parents {
                 stack.push(parent.as_str());
             }
         }
-        // a tip older than anything in `raw` just can't be walked further - harmless
     }
     Ok(reachable)
 }
 
-// off the main thread so re-fetching a big repo's history never freezes the window
 #[tauri::command]
 pub async fn commit_graph(repo_path: String, limit: usize) -> Result<CommitGraphData, String> {
     tauri::async_runtime::spawn_blocking(move || commit_graph_sync(repo_path, limit))
@@ -147,14 +133,12 @@ pub async fn commit_graph(repo_path: String, limit: usize) -> Result<CommitGraph
         .map_err(|e| format!("internal error: {e}"))?
 }
 
-// limit pages the history in; "load more" re-requests a larger limit (not an offset) so earlier commits never reshuffle
 fn commit_graph_sync(repo_path: String, limit: usize) -> Result<CommitGraphData, String> {
-    // \x1f separates fields - unlike '|' or ',', it can't appear in a commit subject
+    // \x1f can not show up in a commit message, so it is safe to split on
     let format = "%H%x1f%P%x1f%an%x1f%ad%x1f%s%x1f%D";
     let pretty = format!("--pretty=format:{format}");
-    // ask for one more than we'll show, to know if there's more history
     let max_count = format!("--max-count={}", limit + 1);
-    // not --all - that would also pull in refs/stash's internal WIP commits
+    // not --all here, that would also bring in the stash's own hidden commits
     let out = run_git(
         &repo_path,
         &[
@@ -170,7 +154,6 @@ fn commit_graph_sync(repo_path: String, limit: usize) -> Result<CommitGraphData,
     )?;
 
     if !out.success {
-        // An empty repo (no commits yet) isn't an error — just no graph.
         if out.stderr.contains("does not have any commits") {
             return Ok(CommitGraphData {
                 commits: vec![],

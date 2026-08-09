@@ -4,7 +4,6 @@ interface LogoProps {
   className?: string;
 }
 
-// the GitRoot mark: a root commit branching into two colored lines
 export default function Logo({ size = 40, glow = true, className }: LogoProps) {
   const glowId = "gitroot-logo-glow";
 

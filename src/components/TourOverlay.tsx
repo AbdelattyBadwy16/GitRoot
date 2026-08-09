@@ -17,7 +17,6 @@ interface Rect {
   height: number;
 }
 
-// finds the real element for the current step and tracks its position - re-measured after tab switches settle
 function useTargetRect(selector: string | null): Rect | null {
   const [rect, setRect] = useState<Rect | null>(null);
 
@@ -74,7 +73,6 @@ const SKIP_BTN: CSSProperties = {
   textDecoration: "underline",
 };
 
-// spotlight + card walkthrough shown on first launch, or replayed anytime from the header - each step points at a real element via its data-tour attribute
 export default function TourOverlay({ stepIndex, onNext, onBack, onSkip, onFinish }: TourOverlayProps) {
   const done = stepIndex >= TOUR_STEPS.length;
   const step = done ? null : TOUR_STEPS[stepIndex];
@@ -102,7 +100,6 @@ export default function TourOverlay({ stepIndex, onNext, onBack, onSkip, onFinis
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 999 }}>
-      {/* blocks every real click while touring - only the card's own buttons are reachable */}
       <div style={{ position: "fixed", inset: 0 }} onClick={(e) => e.stopPropagation()} />
 
       {highlighted ? (
