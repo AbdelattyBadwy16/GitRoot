@@ -16,7 +16,6 @@ const inputStyle: CSSProperties = {
   fontSize: 13,
 };
 
-// blocks nothing, just asks for a name + email before your first commit here - git refuses to commit without them
 export default function GitIdentityPrompt({ repoPath, onSaved }: GitIdentityPromptProps) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");

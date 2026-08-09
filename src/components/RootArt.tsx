@@ -15,7 +15,6 @@ interface ArtEdge {
   color: string;
 }
 
-// decorative root system, not real data - the Logo's motif grown into a fuller tree
 const NODES: ArtNode[] = [
   { id: "root", x: 150, y: 415, r: 10, color: "var(--lane-1)" },
   { id: "fork", x: 150, y: 275, r: 8, color: "var(--lane-1)" },
@@ -49,7 +48,6 @@ function nodeDelay(id: string): number {
   return i === -1 ? 0.1 : edgeDelay(i) + GROW_DURATION * 0.7;
 }
 
-// decorative animated root system for the landing page - grows in once, then idles
 export default function RootArt() {
   return (
     <svg viewBox="0 0 300 440" width="100%" height="100%" style={{ overflow: "visible" }} aria-hidden="true">

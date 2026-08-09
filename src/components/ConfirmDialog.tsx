@@ -9,7 +9,6 @@ interface ConfirmDialogProps {
   busy?: boolean;
 }
 
-// confirm-before-running step for risky actions (see DESIGN.md)
 export default function ConfirmDialog({ title, message, confirmLabel, onConfirm, onCancel, busy }: ConfirmDialogProps) {
   return (
     <motion.div

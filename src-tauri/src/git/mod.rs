@@ -6,7 +6,6 @@ use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-// raw result of a git subprocess - no interpretation, no wording (that's the frontend's job)
 #[derive(Debug, Serialize)]
 pub struct GitOutput {
     pub success: bool,
@@ -14,15 +13,12 @@ pub struct GitOutput {
     pub stderr: String,
 }
 
-// hard kill timeout - ConnectTimeout below only covers SSH's TCP connect, not a DNS hang when the VPN is off
 const GIT_TIMEOUT: Duration = Duration::from_secs(20);
 
-// every git call in the app goes through here, always as an argument array, never a shell string
 pub fn run_git(repo_path: &str, args: &[&str]) -> Result<GitOutput, String> {
     run_git_full(repo_path, args, None, GIT_TIMEOUT)
 }
 
-// like run_git, but feeds stdin_data to the process - for `git apply`, which reads its patch from stdin
 pub fn run_git_with_stdin(
     repo_path: &str,
     args: &[&str],
@@ -31,7 +27,6 @@ pub fn run_git_with_stdin(
     run_git_full(repo_path, args, Some(stdin_data), GIT_TIMEOUT)
 }
 
-// lets tests use a short timeout instead of waiting out the real one
 #[cfg(test)]
 fn run_git_with_timeout(
     repo_path: &str,
@@ -52,16 +47,15 @@ fn run_git_full(
         .arg("-C")
         .arg(repo_path)
         .args(args)
-        // fail fast instead of hanging on a credential prompt with nowhere to show it
+        // if not set, git can stop and wait for a password with no way to show it, forever
         .env("GIT_TERMINAL_PROMPT", "0")
-        // same for SSH specifically - BatchMode disables its prompts, ConnectTimeout caps the TCP connect
+        // same idea for ssh, so it never waits for a prompt either
         .env(
             "GIT_SSH_COMMAND",
             "ssh -o BatchMode=yes -o ConnectTimeout=10",
         )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        // never inherit our own stdin - that could hang exactly like GIT_TIMEOUT exists to prevent
         .stdin(if stdin_data.is_some() {
             Stdio::piped()
         } else {
@@ -75,16 +69,15 @@ fn run_git_full(
     if let Some(data) = stdin_data {
         let mut stdin_pipe = child.stdin.take().expect("stdin was piped");
         let data = data.to_string();
-        // own thread - writing/reading the same pipe as the process can deadlock if a buffer fills
+        // do this on its own thread, or big input can fill the pipe buffer and freeze everything
         std::thread::spawn(move || {
             let _ = stdin_pipe.write_all(data.as_bytes());
-            // dropping stdin_pipe here closes it, signaling EOF to git
         });
     }
 
-    // read stdout/stderr on their own threads while waiting, or a chatty command could block on a full pipe buffer
     let mut stdout_pipe = child.stdout.take().expect("stdout was piped");
     let mut stderr_pipe = child.stderr.take().expect("stderr was piped");
+    // same reason, read these on their own threads too
     let stdout_reader = std::thread::spawn(move || {
         let mut buf = Vec::new();
         let _ = stdout_pipe.read_to_end(&mut buf);
@@ -103,7 +96,7 @@ fn run_git_full(
             Ok(None) if start.elapsed() < timeout => {
                 std::thread::sleep(Duration::from_millis(50));
             }
-            Ok(None) => break None, // timed out
+            Ok(None) => break None,
             Err(e) => return Err(format!("failed to wait on git: {e}")),
         }
     };
@@ -111,11 +104,10 @@ fn run_git_full(
     let Some(status) = status else {
         let _ = child.kill();
         let _ = child.wait();
-        // not joining the reader threads - if git spawned ssh as a child, killing git alone won't close ssh's pipe copy
         return Ok(GitOutput {
             success: false,
             stdout: String::new(),
-            // phrased to match looks_like_network_error's check, so a hang reads the same as an immediate connection failure
+            // keep this text matching looks_like_network_error below, or a timeout stop being detected as one
             stderr: "gitroot: timed out waiting for git — the remote may be unreachable (check your network or VPN)".to_string(),
         });
     };
@@ -130,7 +122,6 @@ fn run_git_full(
     })
 }
 
-// true if stderr looks like a credential/auth failure rather than some other kind of error
 pub fn looks_like_auth_error(stderr: &str) -> bool {
     let lower = stderr.to_lowercase();
     const MARKERS: [&str; 8] = [
@@ -146,11 +137,9 @@ pub fn looks_like_auth_error(stderr: &str) -> bool {
     MARKERS.iter().any(|m| lower.contains(m))
 }
 
-// true if the remote just couldn't be reached, as opposed to a credentials problem
 pub fn looks_like_network_error(stderr: &str) -> bool {
     let lower = stderr.to_lowercase();
     const MARKERS: [&str; 6] = [
-        // broad on purpose so this also catches our own "timed out waiting for git" message
         "timed out",
         "could not resolve host",
         "could not resolve hostname",
@@ -168,7 +157,6 @@ pub struct RepoInfo {
     pub current_branch: String,
 }
 
-// symbolic-ref works even before the first commit (rev-parse --abbrev-ref fails there); falls back to rev-parse for detached HEAD
 fn current_branch_name(path: &str) -> Result<String, String> {
     let symbolic = run_git(path, &["symbolic-ref", "--short", "HEAD"])?;
     if symbolic.success {
@@ -178,7 +166,6 @@ fn current_branch_name(path: &str) -> Result<String, String> {
     Ok(fallback.stdout.trim().to_string())
 }
 
-// validates path is a git repo and returns basic info, called when the user picks a folder
 #[tauri::command]
 pub async fn open_repo(path: String) -> Result<RepoInfo, String> {
     tauri::async_runtime::spawn_blocking(move || open_repo_sync(path))
@@ -206,7 +193,6 @@ fn open_repo_sync(path: String) -> Result<RepoInfo, String> {
     })
 }
 
-// git init + optional remote - doesn't auto-pull, that's a separate explicit command
 #[tauri::command]
 pub async fn init_repo(path: String, remote_url: Option<String>) -> Result<RepoInfo, String> {
     tauri::async_runtime::spawn_blocking(move || init_repo_sync(path, remote_url))
@@ -233,7 +219,6 @@ fn init_repo_sync(path: String, remote_url: Option<String>) -> Result<RepoInfo, 
     open_repo_sync(path)
 }
 
-// last path segment of a URL minus ".git" - handles both https and git@host:path forms
 fn repo_name_from_url(url: &str) -> String {
     let trimmed = url.trim().trim_end_matches('/');
     let last = trimmed.rsplit('/').next().unwrap_or(trimmed);
@@ -246,7 +231,6 @@ fn repo_name_from_url(url: &str) -> String {
     }
 }
 
-// clones into a new subfolder of destination_dir (named after the repo), then opens it
 #[tauri::command]
 pub async fn clone_repo(url: String, destination_dir: String) -> Result<RepoInfo, String> {
     tauri::async_runtime::spawn_blocking(move || clone_repo_sync(url, destination_dir))
@@ -267,7 +251,6 @@ fn clone_repo_sync(url: String, destination_dir: String) -> Result<RepoInfo, Str
         ));
     }
 
-    // run from destination_dir - the target doesn't exist yet, so it can't be -C'd into
     let out = run_git(&destination_dir, &["clone", "--", &url, &name])?;
     if !out.success {
         if looks_like_auth_error(&out.stderr) {
@@ -290,7 +273,6 @@ pub struct GitAvailability {
     pub version: Option<String>,
 }
 
-// checked once at startup - nothing else in the app works until this is true
 #[tauri::command]
 pub async fn check_git_available() -> Result<GitAvailability, String> {
     tauri::async_runtime::spawn_blocking(check_git_available_sync)
@@ -330,7 +312,6 @@ fn git_config_value(repo_path: &str, key: &str) -> Option<String> {
     }
 }
 
-// the name/email every commit here gets attributed to - git refuses to commit until both are set
 #[tauri::command]
 pub async fn check_git_identity(repo_path: String) -> Result<GitIdentity, String> {
     tauri::async_runtime::spawn_blocking(move || check_git_identity_sync(repo_path))
@@ -345,7 +326,7 @@ fn check_git_identity_sync(repo_path: String) -> Result<GitIdentity, String> {
     })
 }
 
-// sets the identity globally, so every repo on this machine picks it up, not just this one
+// this write to the global git config, not just this one repo
 #[tauri::command]
 pub async fn set_git_identity(
     repo_path: String,

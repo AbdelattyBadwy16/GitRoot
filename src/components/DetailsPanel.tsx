@@ -6,8 +6,6 @@ import ActionDiagram from "./ActionDiagram";
 interface DetailsPanelProps {
   details: ActionDetails | null;
   running: string | null;
-  // live "resolving commit 2 of 4" text, polled while a rebase is in flight - replaces the plain
-  // "running rebase…" line when available
   runningLabel?: string | null;
 }
 
@@ -22,7 +20,6 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-// the right-hand column: full breakdown of the last command run, only visible in Learning Mode
 export default function DetailsPanel({ details, running, runningLabel }: DetailsPanelProps) {
   return (
     <div

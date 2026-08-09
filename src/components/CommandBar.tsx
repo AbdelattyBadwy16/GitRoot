@@ -8,7 +8,6 @@ interface CommandBarProps {
   onOpenCommit: () => void;
   commitOpen: boolean;
   busy: string | null;
-  // when on, hovering a command shows what it does (see App.tsx)
   learningMode: boolean;
 }
 
@@ -69,7 +68,6 @@ function CommitIcon() {
   );
 }
 
-// each command gets its own color identity, matching the graph's lane palette
 const BUTTONS: { key: Exclude<CommandName, "commit">; label: string; icon: () => JSX.Element; hint: string; color: string }[] = [
   { key: "pull", label: "pull", icon: PullIcon, hint: "downloads new commits from the remote and merges them into your branch.", color: "var(--lane-1)" },
   { key: "push", label: "push", icon: PushIcon, hint: "uploads your commits so the remote matches your branch.", color: "var(--lane-2)" },
@@ -78,7 +76,6 @@ const BUTTONS: { key: Exclude<CommandName, "commit">; label: string; icon: () =>
 const COMMIT_HINT = "review what changed and save the ones you choose as a new point in history.";
 const COMMIT_COLOR = "var(--lane-3)";
 
-// tooltip next to a button on hover, only rendered when Learning Mode is on
 function HoverHint({ text }: { text: string }) {
   return (
     <AnimatePresence>
@@ -136,7 +133,6 @@ function IconChip({ color, active, busy, children }: { color: string; active: bo
   );
 }
 
-// the sidebar's command buttons
 export default function CommandBar({ onRun, onOpenCommit, commitOpen, busy, learningMode }: CommandBarProps) {
   const [hovered, setHovered] = useState<string | null>(null);
 

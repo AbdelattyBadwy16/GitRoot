@@ -72,12 +72,10 @@ import {
 import { isHead } from "./lib/graph";
 
 const EMPTY_GRAPH: CommitGraphData = { commits: [], edges: [], laneCount: 0, hasMore: false };
-// how many commits the graph loads at a time, so a huge repo doesn't freeze the window on open
 const GRAPH_PAGE_SIZE = 30;
 
 type Tab = "graph" | "commit" | "branches";
 
-// everything needed to reverse whatever the last successful action did
 type UndoAction =
   | { kind: "pull"; targetHash: string }
   | { kind: "push"; targetHash: string }
@@ -116,7 +114,6 @@ function undoConfirmText(action: UndoAction): string {
   }
 }
 
-// figures out how to undo whatever action just succeeded, or null when there's nothing safe to offer
 function computeUndo(kind: ActionKind, result: CommandResult): UndoAction | null {
   const data = result.data;
   switch (kind) {
@@ -141,20 +138,15 @@ function computeUndo(kind: ActionKind, result: CommandResult): UndoAction | null
   }
 }
 
-// continue_merge/continue_rebase don't track which branch the original operation was combining
-// in (only the paused-operation React state below does) - patches it into the result so the
-// details panel's "combines {target}'s history..." wording resolves to a real name
 function withTarget(result: CommandResult, target: string): CommandResult {
   return { ...result, data: { ...result.data, target } };
 }
 
 const LEARNING_MODE_KEY = "gitroot:learningMode";
-// set the first time a repo is ever opened, so the welcome tour prompt only ever appears once
 const TOUR_OFFERED_KEY = "gitroot:tourOffered";
 
 function loadLearningMode(): boolean {
   const stored = localStorage.getItem(LEARNING_MODE_KEY);
-  // defaults on - explaining commands is the whole point of this app
   return stored === null ? true : stored === "true";
 }
 
@@ -180,14 +172,11 @@ export default function App() {
   const [showTourPrompt, setShowTourPrompt] = useState(false);
   const [tourStep, setTourStep] = useState<number | null>(null);
 
-  // merge/rebase state machine - see DESIGN.md 2.6. A paused merge/rebase (real conflict, mid-operation)
-  // shows the shared ConflictDialog; everything before that point reuses ConfirmDialog.
   const [mergeConfirm, setMergeConfirm] = useState<{ target: string; preview: MergePreview } | null>(null);
   const [rebaseFlow, setRebaseFlow] = useState<{ step: "warning" | "plan"; target: string; preflight: RebasePreflight } | null>(null);
   const [rebaseProgress, setRebaseProgress] = useState<{ current: number; total: number } | null>(null);
   const [pausedOp, setPausedOp] = useState<{ kind: "merge" | "rebase"; target: string } | null>(null);
 
-  // checked once at startup - nothing else works until this is true
   useEffect(() => {
     checkGitAvailable()
       .then((info) => setGitAvailable(info.available))
@@ -198,30 +187,25 @@ export default function App() {
     localStorage.setItem(LEARNING_MODE_KEY, String(learningMode));
   }, [learningMode]);
 
-  // leaving the commit tab shouldn't leave the hunk editor silently open underneath
   useEffect(() => {
     if (activeTab !== "commit") setHunkEditorFile(null);
   }, [activeTab]);
 
-  // landing page state
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
   const [showManualInput, setShowManualInput] = useState(false);
   const [pathInput, setPathInput] = useState("");
-  // set when the chosen folder is valid but not a git repo yet - offers to init it right there
   const [notGitFolderPath, setNotGitFolderPath] = useState<string | null>(null);
   const [initRemoteUrl, setInitRemoteUrl] = useState("");
   const [showCloneInput, setShowCloneInput] = useState(false);
   const [cloneUrl, setCloneUrl] = useState("");
   const [cloning, setCloning] = useState(false);
 
-  // limit defaults to the current page - pull/push/commit just want to refresh what's showing, not reset to page 1
   async function refresh(path: string, limit: number = graphLimit): Promise<CommitGraphData> {
     const [g, s, b] = await Promise.all([getCommitGraph(path, limit), getStatus(path), listBranches(path)]);
     setGraph(g);
     setFiles(s);
     setBranches(b);
-    // keeps the header's branch pill honest even if the branch changed outside this app
     const current = b.find((x) => x.isCurrent)?.name;
     if (current) {
       setRepo((r) => (r && r.path === path && r.currentBranch !== current ? { ...r, currentBranch: current } : r));
@@ -242,7 +226,6 @@ export default function App() {
     }
   }
 
-  // kept in refs so the polling interval below always sees the latest busy/refresh without restarting its timer
   const busyRef = useRef(busy);
   useEffect(() => {
     busyRef.current = busy;
@@ -252,7 +235,6 @@ export default function App() {
     refreshRef.current = refresh;
   });
 
-  // auto-refresh: polls a cheap fingerprint (see repo_fingerprint_sync) to catch changes made outside the app
   useEffect(() => {
     if (!repo) return;
     let lastFingerprint: string | null = null;
@@ -263,7 +245,7 @@ export default function App() {
       try {
         fp = await getRepoFingerprint(path);
       } catch {
-        return; // repo momentarily unreadable (e.g. mid-git-operation); next tick retries
+        return;
       }
       if (lastFingerprint === null) {
         lastFingerprint = fp;
@@ -271,7 +253,6 @@ export default function App() {
       }
       if (fp !== lastFingerprint) {
         lastFingerprint = fp;
-        // skip while a command is actively running - its own completion already refreshes
         if (busyRef.current === null) await refreshRef.current(path);
       }
     };
@@ -280,7 +261,6 @@ export default function App() {
     return () => window.clearInterval(interval);
   }, [repo]);
 
-  // briefly spotlights the current HEAD after an action that could have moved it
   function pulseHead(g: CommitGraphData) {
     const head = g.commits.find(isHead);
     if (!head) return;
@@ -288,15 +268,12 @@ export default function App() {
     window.setTimeout(() => setPulseHash((cur) => (cur === head.hash ? null : cur)), 2600);
   }
 
-  // feeds the details column - see explain.ts for the full breakdown it computes
   function applyResult(kind: ActionKind, result: CommandResult) {
     const details = explainDetails(kind, result);
     setLastAction(details);
     return details;
   }
 
-  // re-reads git's actual identity - called after GitIdentityPrompt saves one, or AccountSwitcher
-  // switches/edits a profile, so both stay in sync with what git config really has
   function refreshGitIdentity() {
     if (!repo) return;
     checkGitIdentity(repo.path)
@@ -304,15 +281,13 @@ export default function App() {
       .catch(() => setGitIdentity(null));
   }
 
-  // shared tail for every way a repo can become "the open one": picked, init'd, or cloned
   async function finishOpening(info: RepoInfo) {
     setRepo(info);
     setGraphLimit(GRAPH_PAGE_SIZE);
     setActiveTab("graph");
     setHunkEditorFile(null);
     setLastUndo(null);
-    // a paused merge/rebase (or an open preview dialog) belongs to whichever repo was open when
-    // it started - stale state here would otherwise poll/act on the wrong repo after switching
+    // clear this so it does not poll or act on the wrong repo after switching
     setMergeConfirm(null);
     setRebaseFlow(null);
     setRebaseProgress(null);
@@ -327,7 +302,6 @@ export default function App() {
     }
   }
 
-  // moves the tour to a given step, switching tabs first if that step lives on a different one
   function tourGoTo(index: number) {
     if (index < 0) return;
     if (index < TOUR_STEPS.length && TOUR_STEPS[index].tab) setActiveTab(TOUR_STEPS[index].tab!);
@@ -343,7 +317,7 @@ export default function App() {
       await finishOpening(info);
     } catch (err) {
       const message = String(err);
-      // matches Rust's exact wording for "valid folder, just not a git repo yet" (see open_repo_sync)
+      // important: this text must match the rust error text exactly
       if (message === "that folder isn't a git repository.") {
         setNotGitFolderPath(path);
       } else {
@@ -375,7 +349,6 @@ export default function App() {
     }
   }
 
-  // cloning needs a destination folder too, so this reuses the same native picker handleBrowse uses
   async function handleClone() {
     const url = cloneUrl.trim();
     if (!url) return;
@@ -401,8 +374,6 @@ export default function App() {
     try {
       const fn = { pull, push, stash }[name];
       const result = await fn(repo.path);
-      // pull is fetch + merge under the hood (pull_sync pins --no-rebase) - a real conflict there
-      // pauses through the same shared conflict UI as an explicit merge, instead of a dead-end error
       if (result.conflict) {
         const target = String(result.data.target ?? "the remote");
         setPausedOp({ kind: "merge", target });
@@ -476,10 +447,6 @@ export default function App() {
     }
   }
 
-  // === merge ===
-
-  // branch picked in BranchesTab - trial-merges via merge-tree (read-only) to know the outcome
-  // before anything real runs, then shows the matching confirm step (see DESIGN.md 2.6)
   async function handlePickMergeTarget(target: string) {
     if (!repo) return;
     const preview = await mergePreview(repo.path, target);
@@ -507,10 +474,6 @@ export default function App() {
     }
   }
 
-  // === rebase ===
-
-  // the already-pushed safety check has to run before any preview - if it finds pushed commits,
-  // the plan only shows after the user explicitly confirms the warning
   async function handlePickRebaseTarget(target: string) {
     if (!repo) return;
     const preflight = await rebasePreflight(repo.path, target);
@@ -527,14 +490,11 @@ export default function App() {
     const target = rebaseFlow.target;
     setRebaseFlow(null);
     setBusy("rebase");
-    // rebase runs commit-by-commit under the hood - poll git's own progress bookkeeping while
-    // this awaits, so "resolving commit 2 of 4" stays live instead of only appearing at the end
     const poll = window.setInterval(async () => {
       try {
         const status = await getRebaseStatus(repo.path);
         setRebaseProgress(status.inProgress ? { current: status.current, total: status.total } : null);
       } catch {
-        // repo momentarily unreadable mid-rebase - next tick retries
       }
     }, 300);
     try {
@@ -555,18 +515,13 @@ export default function App() {
     }
   }
 
-  // === shared conflict pause (merge and rebase both land here) ===
-
   async function handleContinuePausedOp() {
     if (!repo || !pausedOp) return;
     setBusy("conflictContinue");
     try {
       const raw = pausedOp.kind === "merge" ? await continueMerge(repo.path) : await continueRebase(repo.path);
-      // continue_merge/continue_rebase don't know the original target - the paused-op state does
       const result = withTarget(raw, pausedOp.target);
       if (result.conflict) {
-        // resolving the current commit immediately hit a conflict on the next one - stay paused,
-        // ConflictDialog's own polling will pick up the new file list and (for rebase) progress
         setLastAction(explainDetails(pausedOp.kind, result));
         return;
       }
@@ -609,7 +564,6 @@ export default function App() {
     }
   }
 
-  // reverses whatever lastUndo describes; push is the one case that's two real git operations in sequence
   async function handleUndo() {
     if (!repo || !lastUndo) return;
     const action = lastUndo;
@@ -634,7 +588,7 @@ export default function App() {
           result = await undoCreateBranch(repo.path, action.name, action.startPoint);
           break;
         case "push": {
-          setLastUndo(null); // a partial failure here (revert ok, push not) isn't safe to blindly retry
+          setLastUndo(null); // not safe to just retry this if it fail halfway
           const revertResult = await revertToCommit(repo.path, action.targetHash);
           if (!revertResult.success) {
             result = revertResult;
@@ -840,8 +794,8 @@ export default function App() {
                 branches={branches}
                 onSwitch={handleSwitchBranch}
                 onCreate={handleCreateBranch}
-                // any in-flight git operation (not just this tab's own) should block the rest -
-                // switching branches or starting a second merge mid-operation isn't safe
+                // important: use the global busy here, not just this tab own busy, or user
+                // can start a second git command while one is still running
                 busy={!!busy}
                 onPickMergeTarget={handlePickMergeTarget}
                 onPickRebaseTarget={handlePickRebaseTarget}
@@ -989,7 +943,6 @@ const TAB_LABELS: { key: Tab; label: string }[] = [
   { key: "branches", label: "branches" },
 ];
 
-// segmented control where the active pill glides between tabs instead of popping to its new spot
 function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void }) {
   return (
     <div data-tour="tab-bar" style={{ padding: "14px 20px 10px" }}>
@@ -1021,7 +974,7 @@ function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void 
                     position: "absolute",
                     inset: 0,
                     borderRadius: 8,
-                    // lightening the capsule's own color reads as "raised" in both themes; comparing surface tokens directly doesn't, since their order flips between light/dark
+                    // this work in both light and dark theme, comparing surface colors direct does not
                     background: "color-mix(in srgb, white 14%, var(--surface-2))",
                     border: "1px solid color-mix(in srgb, var(--text-primary) 8%, transparent)",
                     boxShadow: "var(--shadow-sm)",
@@ -1047,7 +1000,6 @@ function UndoIcon() {
   );
 }
 
-// always-visible summary of the branch's ahead/behind and clean/dirty state, lives in the header so it's visible on every tab
 function BranchStatusBadge({ branch, changedFiles }: { branch: BranchInfo | null; changedFiles: number }) {
   if (!branch) return null;
   const clean = changedFiles === 0;
@@ -1113,7 +1065,6 @@ function Chip({ label, title, muted, dotColor }: { label: string; title?: string
   );
 }
 
-// one switch that gates every "explain as you go" surface: the details column and the command hover hints
 function LearningModeToggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
@@ -1191,7 +1142,6 @@ const BLOBS = [
   { color: "var(--lane-7)", size: 320, top: "70%", left: "5%", dur: 19 },
 ];
 
-// scannable reasons to use this over a terminal
 const FEATURES: { color: string; text: string }[] = [
   { color: "var(--lane-1)", text: "every command explained in plain language" },
   { color: "var(--lane-3)", text: "undo safely — history is never force-deleted" },
@@ -1199,7 +1149,6 @@ const FEATURES: { color: string; text: string }[] = [
   { color: "var(--lane-7)", text: "every branch visible, one click to switch" },
 ];
 
-// shown instead of everything else on startup when git itself isn't on this machine - nothing works without it
 function GitMissingScreen({ onRetry }: { onRetry: () => void }) {
   return (
     <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--surface-0)", padding: 40 }}>
@@ -1291,11 +1240,9 @@ function LandingPage({
         />
       ))}
 
-      {/* content scrolls independently of the blobs so a small window doesn't clip the expanded forms */}
       <div style={{ position: "relative", height: "100%", overflow: "auto" }}>
         <div style={{ minHeight: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: "48px 40px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 56, maxWidth: 960, width: "100%", flexWrap: "wrap", justifyContent: "center" }}>
-            {/* LEFT: identity, actions, what you actually get */}
             <div style={{ flex: "1 1 420px", maxWidth: 460 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
                 <Logo size={44} />
@@ -1613,7 +1560,6 @@ function LandingPage({
               </p>
             </div>
 
-            {/* right: decorative preview of the same "root system" the real commit graph draws */}
             <motion.div
               animate={{ y: [0, -10, 0] }}
               transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}

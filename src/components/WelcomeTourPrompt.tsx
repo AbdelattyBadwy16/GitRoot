@@ -6,7 +6,6 @@ interface WelcomeTourPromptProps {
   onSkip: () => void;
 }
 
-// shown once, ever, the first time a repo is opened - offers the guided tour (see TourOverlay + tour.ts)
 export default function WelcomeTourPrompt({ onStart, onSkip }: WelcomeTourPromptProps) {
   return (
     <motion.div

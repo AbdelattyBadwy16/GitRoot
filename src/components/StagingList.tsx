@@ -21,7 +21,6 @@ function statusColor(label: string): string {
   return STATUS_COLOR[label] ?? "var(--lane-2)";
 }
 
-// the staging area: checking a box stages/unstages, clicking a row opens the hunk-by-hunk view
 export default function StagingList({ files, onToggle, onOpenFile, message, onMessageChange, onCommit, busy }: StagingListProps) {
   const stagedCount = files.filter((f) => f.staged).length;
 

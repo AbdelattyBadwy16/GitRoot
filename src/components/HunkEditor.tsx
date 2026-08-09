@@ -7,14 +7,11 @@ interface HunkEditorProps {
   repoPath: string;
   filePath: string;
   onBack: () => void;
-  // called after any hunk is staged/discarded, so the file list behind this view can catch up
   onChanged: () => void;
 }
 
-// which line indices within each hunk are checked, keyed by hunk index - matches parseDiff(hunk)'s array
 type Selections = Map<number, Set<number>>;
 
-// every add/remove line checked by default, so doing nothing acts on the whole hunk
 function defaultSelection(hunk: string): Set<number> {
   const sel = new Set<number>();
   parseDiff(hunk).forEach((l, li) => {
@@ -23,7 +20,6 @@ function defaultSelection(hunk: string): Set<number> {
   return sel;
 }
 
-// a file's changes broken into hunks, each hunk broken further into checkable lines (VS Code's inline-gutter style)
 export default function HunkEditor({ repoPath, filePath, onBack, onChanged }: HunkEditorProps) {
   const [result, setResult] = useState<FileHunksResult | null>(null);
   const [selections, setSelections] = useState<Selections>(new Map());
@@ -77,7 +73,6 @@ export default function HunkEditor({ repoPath, filePath, onBack, onChanged }: Hu
     }
   }
 
-  // for a file that can't split into hunks (binary, mode change) - whole-file stage/discard, then back to the file list
   async function actWholeFile(action: "stage" | "discard") {
     setWholeFileBusy(action);
     setError(null);

@@ -1,4 +1,4 @@
-// Prevents an additional console window on Windows in release builds.
+// this stop extra console window on windows
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod git;
