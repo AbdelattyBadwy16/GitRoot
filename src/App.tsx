@@ -7,7 +7,9 @@ import DetailsPanel from "./components/DetailsPanel";
 import BranchesTab from "./components/BranchesTab";
 import HunkEditor from "./components/HunkEditor";
 import ConfirmDialog from "./components/ConfirmDialog";
+import ConflictDialog from "./components/ConflictDialog";
 import GitIdentityPrompt from "./components/GitIdentityPrompt";
+import AccountSwitcher from "./components/AccountSwitcher";
 import TourOverlay from "./components/TourOverlay";
 import WelcomeTourPrompt from "./components/WelcomeTourPrompt";
 import Logo from "./components/Logo";
@@ -38,14 +40,35 @@ import {
   checkGitAvailable,
   checkGitIdentity,
   openExternal,
+  mergePreview,
+  mergeBranch,
+  continueMerge,
+  abortMerge,
+  rebasePreflight,
+  rebaseBranch,
+  getRebaseStatus,
+  continueRebase,
+  abortRebase,
   type RepoInfo,
   type FileStatus,
   type CommitGraphData,
   type BranchInfo,
   type CommandResult,
   type GitIdentity,
+  type MergePreview,
+  type RebasePreflight,
 } from "./lib/gitCommands";
-import { explainDetails, revertConfirmText, type ActionDetails, type ActionKind, type CommandName } from "./lib/explain";
+import {
+  explainDetails,
+  revertConfirmText,
+  mergePreviewText,
+  rebaseAlreadyPushedWarning,
+  rebasePlanText,
+  rebaseProgressText,
+  type ActionDetails,
+  type ActionKind,
+  type CommandName,
+} from "./lib/explain";
 import { isHead } from "./lib/graph";
 
 const EMPTY_GRAPH: CommitGraphData = { commits: [], edges: [], laneCount: 0, hasMore: false };
@@ -118,6 +141,13 @@ function computeUndo(kind: ActionKind, result: CommandResult): UndoAction | null
   }
 }
 
+// continue_merge/continue_rebase don't track which branch the original operation was combining
+// in (only the paused-operation React state below does) - patches it into the result so the
+// details panel's "combines {target}'s history..." wording resolves to a real name
+function withTarget(result: CommandResult, target: string): CommandResult {
+  return { ...result, data: { ...result.data, target } };
+}
+
 const LEARNING_MODE_KEY = "gitroot:learningMode";
 // set the first time a repo is ever opened, so the welcome tour prompt only ever appears once
 const TOUR_OFFERED_KEY = "gitroot:tourOffered";
@@ -149,6 +179,13 @@ export default function App() {
   const [gitIdentity, setGitIdentity] = useState<GitIdentity | null>(null);
   const [showTourPrompt, setShowTourPrompt] = useState(false);
   const [tourStep, setTourStep] = useState<number | null>(null);
+
+  // merge/rebase state machine - see DESIGN.md 2.6. A paused merge/rebase (real conflict, mid-operation)
+  // shows the shared ConflictDialog; everything before that point reuses ConfirmDialog.
+  const [mergeConfirm, setMergeConfirm] = useState<{ target: string; preview: MergePreview } | null>(null);
+  const [rebaseFlow, setRebaseFlow] = useState<{ step: "warning" | "plan"; target: string; preflight: RebasePreflight } | null>(null);
+  const [rebaseProgress, setRebaseProgress] = useState<{ current: number; total: number } | null>(null);
+  const [pausedOp, setPausedOp] = useState<{ kind: "merge" | "rebase"; target: string } | null>(null);
 
   // checked once at startup - nothing else works until this is true
   useEffect(() => {
@@ -258,6 +295,15 @@ export default function App() {
     return details;
   }
 
+  // re-reads git's actual identity - called after GitIdentityPrompt saves one, or AccountSwitcher
+  // switches/edits a profile, so both stay in sync with what git config really has
+  function refreshGitIdentity() {
+    if (!repo) return;
+    checkGitIdentity(repo.path)
+      .then(setGitIdentity)
+      .catch(() => setGitIdentity(null));
+  }
+
   // shared tail for every way a repo can become "the open one": picked, init'd, or cloned
   async function finishOpening(info: RepoInfo) {
     setRepo(info);
@@ -265,6 +311,12 @@ export default function App() {
     setActiveTab("graph");
     setHunkEditorFile(null);
     setLastUndo(null);
+    // a paused merge/rebase (or an open preview dialog) belongs to whichever repo was open when
+    // it started - stale state here would otherwise poll/act on the wrong repo after switching
+    setMergeConfirm(null);
+    setRebaseFlow(null);
+    setRebaseProgress(null);
+    setPausedOp(null);
     await refresh(info.path, GRAPH_PAGE_SIZE);
     checkGitIdentity(info.path)
       .then(setGitIdentity)
@@ -349,6 +401,15 @@ export default function App() {
     try {
       const fn = { pull, push, stash }[name];
       const result = await fn(repo.path);
+      // pull is fetch + merge under the hood (pull_sync pins --no-rebase) - a real conflict there
+      // pauses through the same shared conflict UI as an explicit merge, instead of a dead-end error
+      if (result.conflict) {
+        const target = String(result.data.target ?? "the remote");
+        setPausedOp({ kind: "merge", target });
+        setLastAction(explainDetails("merge", result));
+        await refresh(repo.path);
+        return;
+      }
       const details = applyResult(name, result);
       if (!details.isError) setLastUndo(computeUndo(name, result));
       const g = await refresh(repo.path);
@@ -410,6 +471,123 @@ export default function App() {
       if (!details.isError) setLastUndo(computeUndo("createBranch", result));
       const g = await refresh(repo.path);
       if (!details.isError) pulseHead(g);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // === merge ===
+
+  // branch picked in BranchesTab - trial-merges via merge-tree (read-only) to know the outcome
+  // before anything real runs, then shows the matching confirm step (see DESIGN.md 2.6)
+  async function handlePickMergeTarget(target: string) {
+    if (!repo) return;
+    const preview = await mergePreview(repo.path, target);
+    setMergeConfirm({ target, preview });
+  }
+
+  async function confirmMerge() {
+    if (!repo || !mergeConfirm) return;
+    const target = mergeConfirm.target;
+    setMergeConfirm(null);
+    setBusy("merge");
+    try {
+      const result = await mergeBranch(repo.path, target);
+      if (result.conflict) {
+        setPausedOp({ kind: "merge", target });
+        setLastAction(explainDetails("merge", result));
+        await refresh(repo.path);
+        return;
+      }
+      const details = applyResult("merge", result);
+      const g = await refresh(repo.path);
+      if (!details.isError) pulseHead(g);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // === rebase ===
+
+  // the already-pushed safety check has to run before any preview - if it finds pushed commits,
+  // the plan only shows after the user explicitly confirms the warning
+  async function handlePickRebaseTarget(target: string) {
+    if (!repo) return;
+    const preflight = await rebasePreflight(repo.path, target);
+    setRebaseFlow({ step: preflight.alreadyPushedCount > 0 ? "warning" : "plan", target, preflight });
+  }
+
+  function confirmRebaseWarning() {
+    if (!rebaseFlow) return;
+    setRebaseFlow({ ...rebaseFlow, step: "plan" });
+  }
+
+  async function confirmRebasePlan() {
+    if (!repo || !rebaseFlow) return;
+    const target = rebaseFlow.target;
+    setRebaseFlow(null);
+    setBusy("rebase");
+    // rebase runs commit-by-commit under the hood - poll git's own progress bookkeeping while
+    // this awaits, so "resolving commit 2 of 4" stays live instead of only appearing at the end
+    const poll = window.setInterval(async () => {
+      try {
+        const status = await getRebaseStatus(repo.path);
+        setRebaseProgress(status.inProgress ? { current: status.current, total: status.total } : null);
+      } catch {
+        // repo momentarily unreadable mid-rebase - next tick retries
+      }
+    }, 300);
+    try {
+      const result = await rebaseBranch(repo.path, target);
+      if (result.conflict) {
+        setPausedOp({ kind: "rebase", target });
+        setLastAction(explainDetails("rebase", result));
+        await refresh(repo.path);
+        return;
+      }
+      const details = applyResult("rebase", result);
+      const g = await refresh(repo.path);
+      if (!details.isError) pulseHead(g);
+    } finally {
+      window.clearInterval(poll);
+      setRebaseProgress(null);
+      setBusy(null);
+    }
+  }
+
+  // === shared conflict pause (merge and rebase both land here) ===
+
+  async function handleContinuePausedOp() {
+    if (!repo || !pausedOp) return;
+    setBusy("conflictContinue");
+    try {
+      const raw = pausedOp.kind === "merge" ? await continueMerge(repo.path) : await continueRebase(repo.path);
+      // continue_merge/continue_rebase don't know the original target - the paused-op state does
+      const result = withTarget(raw, pausedOp.target);
+      if (result.conflict) {
+        // resolving the current commit immediately hit a conflict on the next one - stay paused,
+        // ConflictDialog's own polling will pick up the new file list and (for rebase) progress
+        setLastAction(explainDetails(pausedOp.kind, result));
+        return;
+      }
+      setPausedOp(null);
+      const details = applyResult(pausedOp.kind, result);
+      const g = await refresh(repo.path);
+      if (!details.isError) pulseHead(g);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleAbortPausedOp() {
+    if (!repo || !pausedOp) return;
+    setBusy("conflictAbort");
+    try {
+      if (pausedOp.kind === "merge") await abortMerge(repo.path);
+      else await abortRebase(repo.path);
+      setPausedOp(null);
+      setLastAction(null);
+      await refresh(repo.path);
     } finally {
       setBusy(null);
     }
@@ -617,6 +795,7 @@ export default function App() {
           >
             switch repo
           </button>
+          <AccountSwitcher repoPath={repo.path} identity={gitIdentity ?? { name: null, email: null }} onIdentityChanged={refreshGitIdentity} />
         </div>
       </header>
 
@@ -643,7 +822,7 @@ export default function App() {
               <div data-tour="staging">
                 {gitIdentity && (!gitIdentity.name || !gitIdentity.email) && (
                   <div style={{ padding: "20px 20px 0" }}>
-                    <GitIdentityPrompt repoPath={repo.path} onSaved={() => checkGitIdentity(repo.path).then(setGitIdentity)} />
+                    <GitIdentityPrompt repoPath={repo.path} onSaved={refreshGitIdentity} />
                   </div>
                 )}
                 <StagingList
@@ -661,7 +840,13 @@ export default function App() {
                 branches={branches}
                 onSwitch={handleSwitchBranch}
                 onCreate={handleCreateBranch}
-                busy={busy === "switchBranch" || busy === "createBranch"}
+                // any in-flight git operation (not just this tab's own) should block the rest -
+                // switching branches or starting a second merge mid-operation isn't safe
+                busy={!!busy}
+                onPickMergeTarget={handlePickMergeTarget}
+                onPickRebaseTarget={handlePickRebaseTarget}
+                mergeBusy={!!busy}
+                rebaseBusy={!!busy}
               />
             ) : (
               <div data-tour="graph" style={{ padding: 20 }}>
@@ -678,7 +863,13 @@ export default function App() {
           </div>
         </div>
 
-        {learningMode && <DetailsPanel details={lastAction} running={busy} />}
+        {learningMode && (
+          <DetailsPanel
+            details={lastAction}
+            running={busy}
+            runningLabel={busy === "rebase" && rebaseProgress ? rebaseProgressText(rebaseProgress.current, rebaseProgress.total) : null}
+          />
+        )}
       </div>
 
       <AnimatePresence>
@@ -706,6 +897,63 @@ export default function App() {
             }}
             onCancel={() => setUndoConfirming(false)}
             busy={busy === "undo"}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {mergeConfirm && (
+          <ConfirmDialog
+            title={mergeConfirm.preview.outcome === "conflict" ? "merge would conflict" : "merge this branch?"}
+            message={mergePreviewText(
+              mergeConfirm.preview.outcome,
+              mergeConfirm.preview.commits,
+              mergeConfirm.preview.currentBranch,
+              mergeConfirm.target,
+              mergeConfirm.preview.files
+            )}
+            confirmLabel="merge"
+            onConfirm={confirmMerge}
+            onCancel={() => setMergeConfirm(null)}
+            busy={busy === "merge"}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {rebaseFlow?.step === "warning" && (
+          <ConfirmDialog
+            title="these commits are already on your remote"
+            message={rebaseAlreadyPushedWarning()}
+            confirmLabel="continue anyway"
+            onConfirm={confirmRebaseWarning}
+            onCancel={() => setRebaseFlow(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {rebaseFlow?.step === "plan" && (
+          <ConfirmDialog
+            title="rebase this branch?"
+            message={rebasePlanText(rebaseFlow.preflight.totalCommits, rebaseFlow.preflight.currentBranch, rebaseFlow.target)}
+            confirmLabel="rebase"
+            onConfirm={confirmRebasePlan}
+            onCancel={() => setRebaseFlow(null)}
+            busy={busy === "rebase"}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {pausedOp && repo && (
+          <ConflictDialog
+            repoPath={repo.path}
+            kind={pausedOp.kind}
+            target={pausedOp.target}
+            onContinue={handleContinuePausedOp}
+            onAbort={handleAbortPausedOp}
+            busy={busy === "conflictContinue" || busy === "conflictAbort"}
           />
         )}
       </AnimatePresence>

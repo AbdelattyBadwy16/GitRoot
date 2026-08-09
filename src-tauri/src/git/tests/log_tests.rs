@@ -6,7 +6,7 @@ use std::process::Command as StdCommand;
 // branch/merge, not just a straight line
 fn build_test_repo() -> String {
     let dir = std::env::temp_dir().join(format!(
-        "sprout-log-test-{}-{}",
+        "gitroot-log-test-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -17,12 +17,22 @@ fn build_test_repo() -> String {
     let path = dir.to_string_lossy().to_string();
 
     let git = |args: &[&str]| {
-        let out = StdCommand::new("git").arg("-C").arg(&path).args(args).output().unwrap();
-        assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+        let out = StdCommand::new("git")
+            .arg("-C")
+            .arg(&path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
     };
     let write = |name: &str, contents: &str| std::fs::write(dir.join(name), contents).unwrap();
 
-    git(&["init", "-q"]);
+    git(&["init", "-q", "-b", "main"]);
     git(&["config", "user.email", "test@example.com"]);
     git(&["config", "user.name", "Test"]);
 
@@ -56,12 +66,21 @@ fn lays_out_a_merge_without_overlap_and_keeps_mainline_straight() {
     // no two commits may share a (lane, row) - that's an overlap on screen
     let mut seen: HashSet<(usize, usize)> = HashSet::new();
     for c in &graph.commits {
-        assert!(seen.insert((c.lane, c.row)), "duplicate position {:?} for {}", (c.lane, c.row), c.hash);
+        assert!(
+            seen.insert((c.lane, c.row)),
+            "duplicate position {:?} for {}",
+            (c.lane, c.row),
+            c.hash
+        );
     }
 
     assert_eq!(graph.edges.len(), 4); // base->none, feature->base, main->base, merge->{main,feature}
 
-    let merge = graph.commits.iter().find(|c| c.parents.len() == 2).expect("a merge commit exists");
+    let merge = graph
+        .commits
+        .iter()
+        .find(|c| c.parents.len() == 2)
+        .expect("a merge commit exists");
     let by_hash: std::collections::HashMap<&str, &GraphCommit> =
         graph.commits.iter().map(|c| (c.hash.as_str(), c)).collect();
     let first_parent = by_hash[merge.parents[0].as_str()];
@@ -69,7 +88,10 @@ fn lays_out_a_merge_without_overlap_and_keeps_mainline_straight() {
     // mainline should continue straight down in the same lane
     assert_eq!(merge.lane, first_parent.lane);
 
-    assert!(graph.commits.iter().all(|c| c.on_remote), "with no remote, every commit should count as on_remote");
+    assert!(
+        graph.commits.iter().all(|c| c.on_remote),
+        "with no remote, every commit should count as on_remote"
+    );
 
     std::fs::remove_dir_all(&repo).ok();
 }
@@ -81,11 +103,20 @@ fn stashed_changes_never_appear_as_graph_nodes() {
     let repo = build_test_repo();
 
     let git = |args: &[&str]| {
-        StdCommand::new("git").arg("-C").arg(&repo).args(args).output().unwrap()
+        StdCommand::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(args)
+            .output()
+            .unwrap()
     };
     std::fs::write(std::path::Path::new(&repo).join("a.txt"), "changed\n").unwrap();
     let stash_out = git(&["stash"]);
-    assert!(stash_out.status.success(), "{}", String::from_utf8_lossy(&stash_out.stderr));
+    assert!(
+        stash_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&stash_out.stderr)
+    );
 
     let graph = commit_graph_sync(repo.clone(), 1000).expect("commit_graph should succeed");
 
@@ -112,21 +143,42 @@ fn distinguishes_pushed_commits_from_local_only_ones() {
     // base -> pushed  (both local main and origin/main point here)
     //      -> local   (committed, never pushed)
     let dir = std::env::temp_dir().join(format!(
-        "sprout-log-remote-test-{}-{}",
+        "gitroot-log-remote-test-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     let remote_dir = dir.join("remote.git");
     let repo_dir = dir.join("repo");
     std::fs::create_dir_all(&repo_dir).unwrap();
 
     let git = |args: &[&str]| {
-        let out = StdCommand::new("git").arg("-C").arg(&repo_dir).args(args).output().unwrap();
-        assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+        let out = StdCommand::new("git")
+            .arg("-C")
+            .arg(&repo_dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
     };
 
-    StdCommand::new("git").arg("init").arg("--bare").arg("-q").arg(&remote_dir).output().unwrap();
-    git(&["init", "-q"]);
+    StdCommand::new("git")
+        .arg("init")
+        .arg("--bare")
+        .arg("-q")
+        .arg("-b")
+        .arg("main")
+        .arg(&remote_dir)
+        .output()
+        .unwrap();
+    git(&["init", "-q", "-b", "main"]);
     git(&["config", "user.email", "test@example.com"]);
     git(&["config", "user.name", "Test"]);
     git(&["remote", "add", "origin", remote_dir.to_str().unwrap()]);
@@ -144,10 +196,24 @@ fn distinguishes_pushed_commits_from_local_only_ones() {
     let graph = commit_graph_sync(repo_path, 1000).expect("commit_graph should succeed");
     assert_eq!(graph.commits.len(), 2);
 
-    let pushed = graph.commits.iter().find(|c| c.message == "pushed commit").unwrap();
-    let local = graph.commits.iter().find(|c| c.message == "local only commit").unwrap();
-    assert!(pushed.on_remote, "commit that was pushed should be on_remote");
-    assert!(!local.on_remote, "commit that was never pushed should NOT be on_remote");
+    let pushed = graph
+        .commits
+        .iter()
+        .find(|c| c.message == "pushed commit")
+        .unwrap();
+    let local = graph
+        .commits
+        .iter()
+        .find(|c| c.message == "local only commit")
+        .unwrap();
+    assert!(
+        pushed.on_remote,
+        "commit that was pushed should be on_remote"
+    );
+    assert!(
+        !local.on_remote,
+        "commit that was never pushed should NOT be on_remote"
+    );
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -155,17 +221,30 @@ fn distinguishes_pushed_commits_from_local_only_ones() {
 #[test]
 fn pages_a_long_history_without_reshuffling_earlier_lanes() {
     let dir = std::env::temp_dir().join(format!(
-        "sprout-log-page-test-{}-{}",
+        "gitroot-log-page-test-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.to_string_lossy().to_string();
     let git = |args: &[&str]| {
-        let out = StdCommand::new("git").arg("-C").arg(&path).args(args).output().unwrap();
-        assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+        let out = StdCommand::new("git")
+            .arg("-C")
+            .arg(&path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
     };
-    git(&["init", "-q"]);
+    git(&["init", "-q", "-b", "main"]);
     git(&["config", "user.email", "test@example.com"]);
     git(&["config", "user.name", "Test"]);
     for i in 0..25 {
@@ -184,11 +263,19 @@ fn pages_a_long_history_without_reshuffling_earlier_lanes() {
 
     // every commit on page 1 must land on the same (lane, row) once the
     // page grows, or "load more" would visibly reshuffle the screen
-    let page1_positions: HashMap<&str, (usize, usize)> =
-        page1.commits.iter().map(|c| (c.hash.as_str(), (c.lane, c.row))).collect();
+    let page1_positions: HashMap<&str, (usize, usize)> = page1
+        .commits
+        .iter()
+        .map(|c| (c.hash.as_str(), (c.lane, c.row)))
+        .collect();
     for c in &full.commits {
         if let Some(&pos) = page1_positions.get(c.hash.as_str()) {
-            assert_eq!((c.lane, c.row), pos, "commit {} moved when the page grew", c.hash);
+            assert_eq!(
+                (c.lane, c.row),
+                pos,
+                "commit {} moved when the page grew",
+                c.hash
+            );
         }
     }
 

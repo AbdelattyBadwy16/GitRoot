@@ -23,17 +23,30 @@ pub fn run_git(repo_path: &str, args: &[&str]) -> Result<GitOutput, String> {
 }
 
 // like run_git, but feeds stdin_data to the process - for `git apply`, which reads its patch from stdin
-pub fn run_git_with_stdin(repo_path: &str, args: &[&str], stdin_data: &str) -> Result<GitOutput, String> {
+pub fn run_git_with_stdin(
+    repo_path: &str,
+    args: &[&str],
+    stdin_data: &str,
+) -> Result<GitOutput, String> {
     run_git_full(repo_path, args, Some(stdin_data), GIT_TIMEOUT)
 }
 
 // lets tests use a short timeout instead of waiting out the real one
 #[cfg(test)]
-fn run_git_with_timeout(repo_path: &str, args: &[&str], timeout: Duration) -> Result<GitOutput, String> {
+fn run_git_with_timeout(
+    repo_path: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<GitOutput, String> {
     run_git_full(repo_path, args, None, timeout)
 }
 
-fn run_git_full(repo_path: &str, args: &[&str], stdin_data: Option<&str>, timeout: Duration) -> Result<GitOutput, String> {
+fn run_git_full(
+    repo_path: &str,
+    args: &[&str],
+    stdin_data: Option<&str>,
+    timeout: Duration,
+) -> Result<GitOutput, String> {
     let mut command = Command::new("git");
     command
         .arg("-C")
@@ -42,13 +55,22 @@ fn run_git_full(repo_path: &str, args: &[&str], stdin_data: Option<&str>, timeou
         // fail fast instead of hanging on a credential prompt with nowhere to show it
         .env("GIT_TERMINAL_PROMPT", "0")
         // same for SSH specifically - BatchMode disables its prompts, ConnectTimeout caps the TCP connect
-        .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=10")
+        .env(
+            "GIT_SSH_COMMAND",
+            "ssh -o BatchMode=yes -o ConnectTimeout=10",
+        )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         // never inherit our own stdin - that could hang exactly like GIT_TIMEOUT exists to prevent
-        .stdin(if stdin_data.is_some() { Stdio::piped() } else { Stdio::null() });
+        .stdin(if stdin_data.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
 
-    let mut child = command.spawn().map_err(|e| format!("failed to run git: {e}"))?;
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("failed to run git: {e}"))?;
 
     if let Some(data) = stdin_data {
         let mut stdin_pipe = child.stdin.take().expect("stdin was piped");
@@ -252,7 +274,9 @@ fn clone_repo_sync(url: String, destination_dir: String) -> Result<RepoInfo, Str
             return Err("you're not logged in to reach this remote.".to_string());
         }
         if looks_like_network_error(&out.stderr) {
-            return Err("couldn't reach that remote — check your network or VPN connection.".to_string());
+            return Err(
+                "couldn't reach that remote — check your network or VPN connection.".to_string(),
+            );
         }
         return Err(out.stderr);
     }
@@ -280,7 +304,10 @@ fn check_git_available_sync() -> Result<GitAvailability, String> {
             available: true,
             version: Some(String::from_utf8_lossy(&out.stdout).trim().to_string()),
         }),
-        _ => Ok(GitAvailability { available: false, version: None }),
+        _ => Ok(GitAvailability {
+            available: false,
+            version: None,
+        }),
     }
 }
 
@@ -320,7 +347,11 @@ fn check_git_identity_sync(repo_path: String) -> Result<GitIdentity, String> {
 
 // sets the identity globally, so every repo on this machine picks it up, not just this one
 #[tauri::command]
-pub async fn set_git_identity(repo_path: String, name: String, email: String) -> Result<(), String> {
+pub async fn set_git_identity(
+    repo_path: String,
+    name: String,
+    email: String,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || set_git_identity_sync(repo_path, name, email))
         .await
         .map_err(|e| format!("internal error: {e}"))?

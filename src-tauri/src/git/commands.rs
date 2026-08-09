@@ -1,4 +1,6 @@
-use super::{looks_like_auth_error, looks_like_network_error, run_git, run_git_with_stdin, GitOutput};
+use super::{
+    looks_like_auth_error, looks_like_network_error, run_git, run_git_with_stdin, GitOutput,
+};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -9,6 +11,9 @@ pub struct CommandResult {
     pub success: bool,
     pub auth_error: bool,
     pub network_error: bool,
+    // true when merge/rebase stopped with unmerged paths, not a hard failure - the frontend pauses with
+    // the shared conflict UI instead of showing this as an error (see ConflictDialog.tsx)
+    pub conflict: bool,
     pub raw_stderr: Option<String>,
     pub data: Value,
     // the real git command that ran, for display
@@ -33,7 +38,27 @@ fn short_hash(full: &str) -> String {
 fn quote_for_display(arg: &str) -> String {
     let needs_quoting = arg.is_empty()
         || arg.chars().any(|c| {
-            c.is_whitespace() || matches!(c, '"' | '\'' | '\\' | '$' | '`' | '*' | '?' | '[' | ']' | '(' | ')' | '&' | ';' | '|' | '<' | '>' | '~' | '#')
+            c.is_whitespace()
+                || matches!(
+                    c,
+                    '"' | '\''
+                        | '\\'
+                        | '$'
+                        | '`'
+                        | '*'
+                        | '?'
+                        | '['
+                        | ']'
+                        | '('
+                        | ')'
+                        | '&'
+                        | ';'
+                        | '|'
+                        | '<'
+                        | '>'
+                        | '~'
+                        | '#'
+                )
         });
     if !needs_quoting {
         return arg.to_string();
@@ -48,6 +73,7 @@ impl CommandResult {
             success: true,
             auth_error: false,
             network_error: false,
+            conflict: false,
             raw_stderr: None,
             data,
             command: command.to_string(),
@@ -59,6 +85,7 @@ impl CommandResult {
             success: false,
             auth_error: true,
             network_error: false,
+            conflict: false,
             raw_stderr: None,
             data: json!({ "remote": remote }),
             command: command.to_string(),
@@ -70,6 +97,7 @@ impl CommandResult {
             success: false,
             auth_error: false,
             network_error: true,
+            conflict: false,
             raw_stderr: None,
             data: json!({ "remote": remote }),
             command: command.to_string(),
@@ -81,10 +109,35 @@ impl CommandResult {
             success: false,
             auth_error: false,
             network_error: false,
+            conflict: false,
             raw_stderr: Some(stderr),
             data: json!({}),
             command: command.to_string(),
         }
+    }
+
+    // merge/rebase stopped with unmerged paths - paused, not failed; the frontend shows the shared
+    // conflict UI (continue/abort) instead of an error message
+    fn conflict(command: &str, branch: &str, files: Vec<String>) -> Self {
+        Self {
+            success: false,
+            auth_error: false,
+            network_error: false,
+            conflict: true,
+            raw_stderr: None,
+            data: json!({ "branch": branch, "files": files }),
+            command: command.to_string(),
+        }
+    }
+
+    // same, but for a pause where the branch/ref being combined in is already known (a fresh
+    // merge_branch/rebase_branch/pull call, as opposed to continue_merge/continue_rebase
+    // re-pausing on the next commit, which don't track it) - lets the details panel's "combines
+    // {target}'s history..." wording resolve to a real name instead of a placeholder
+    fn conflict_with_target(command: &str, branch: &str, target: &str, files: Vec<String>) -> Self {
+        let mut result = Self::conflict(command, branch, files);
+        result.data["target"] = json!(target);
+        result
     }
 
     // classifies a failed pull/push into auth / network / generic
@@ -123,13 +176,34 @@ pub async fn pull(repo_path: String) -> Result<CommandResult, String> {
 
 fn pull_sync(repo_path: String) -> Result<CommandResult, String> {
     let remote = upstream_ref(&repo_path).unwrap_or_else(|| "origin".to_string());
-    let command = display_command(&["pull"]);
+    // --no-rebase pins pull to merge semantics explicitly, matching what the dictionary already
+    // promises ("merges them into your branch"). without it, git on divergent branches refuses
+    // outright ("fatal: Need to specify how to reconcile divergent branches") unless the user's
+    // own global config happens to set pull.rebase/pull.ff - this makes every pull behave the
+    // same way regardless of that, and keeps the resulting conflict (if any) a plain merge so it
+    // pauses through the same continue_merge/abort_merge as a manual merge would
+    let pull_args = ["pull", "--no-rebase"];
+    let command = display_command(&pull_args);
 
     let before = run_git(&repo_path, &["rev-parse", "HEAD"])?.stdout;
-    let result = run_git(&repo_path, &["pull"])?;
+    let result = run_git(&repo_path, &pull_args)?;
 
     if !result.success {
-        return Ok(CommandResult::from_remote_failure(&command, result.stderr, &remote));
+        let unmerged = conflicted_files_sync(&repo_path)?;
+        if !unmerged.is_empty() {
+            let current_branch = super::current_branch_name(&repo_path).unwrap_or_default();
+            return Ok(CommandResult::conflict_with_target(
+                &command,
+                &current_branch,
+                &remote,
+                unmerged,
+            ));
+        }
+        return Ok(CommandResult::from_remote_failure(
+            &command,
+            result.stderr,
+            &remote,
+        ));
     }
 
     let after = run_git(&repo_path, &["rev-parse", "HEAD"])?.stdout;
@@ -177,11 +251,14 @@ fn push_sync(repo_path: String) -> Result<CommandResult, String> {
         (count, short_hash(&upstream_hash))
     } else {
         // no upstream - count commits not reachable from any remote branch instead of reporting a misleading zero
-        let count = run_git(&repo_path, &["rev-list", "--count", "HEAD", "--not", "--remotes"])?
-            .stdout
-            .trim()
-            .parse::<u32>()
-            .unwrap_or(0);
+        let count = run_git(
+            &repo_path,
+            &["rev-list", "--count", "HEAD", "--not", "--remotes"],
+        )?
+        .stdout
+        .trim()
+        .parse::<u32>()
+        .unwrap_or(0);
         (count, "no upstream yet".to_string())
     };
 
@@ -197,7 +274,11 @@ fn push_sync(repo_path: String) -> Result<CommandResult, String> {
     let result = run_git(&repo_path, &push_args)?;
 
     if !result.success {
-        return Ok(CommandResult::from_remote_failure(&command, result.stderr, &remote));
+        return Ok(CommandResult::from_remote_failure(
+            &command,
+            result.stderr,
+            &remote,
+        ));
     }
 
     let after = run_git(&repo_path, &["rev-parse", "HEAD"])?.stdout;
@@ -215,7 +296,10 @@ fn push_sync(repo_path: String) -> Result<CommandResult, String> {
 }
 
 #[tauri::command]
-pub async fn hard_reset_to(repo_path: String, target_hash: String) -> Result<CommandResult, String> {
+pub async fn hard_reset_to(
+    repo_path: String,
+    target_hash: String,
+) -> Result<CommandResult, String> {
     tauri::async_runtime::spawn_blocking(move || hard_reset_to_sync(repo_path, target_hash))
         .await
         .map_err(|e| format!("internal error: {e}"))?
@@ -236,7 +320,10 @@ fn hard_reset_to_sync(repo_path: String, target_hash: String) -> Result<CommandR
     if !result.success {
         return Ok(CommandResult::failure(&command, result.stderr));
     }
-    Ok(CommandResult::ok(&command, json!({ "before": short_hash(&old_head), "after": short_hash(&target_hash) })))
+    Ok(CommandResult::ok(
+        &command,
+        json!({ "before": short_hash(&old_head), "after": short_hash(&target_hash) }),
+    ))
 }
 
 #[tauri::command]
@@ -320,7 +407,11 @@ fn status_sync(repo_path: String) -> Result<Vec<FileStatus>, String> {
         let y = line.chars().nth(1).unwrap();
         // Rename lines look like "R  old -> new"; keep the destination path.
         let raw_path = &line[3..];
-        let path = raw_path.split(" -> ").last().unwrap_or(raw_path).to_string();
+        let path = raw_path
+            .split(" -> ")
+            .last()
+            .unwrap_or(raw_path)
+            .to_string();
 
         let staged = x != ' ' && x != '?';
         let status_label = match (x, y) {
@@ -406,7 +497,10 @@ fn file_diff_sync(repo_path: String, path: String, staged: bool) -> Result<Strin
 
     if !tracked {
         // untracked file has nothing to diff against - --no-index vs /dev/null shows it as newly added instead
-        let out = run_git(&repo_path, &["diff", "--no-index", "--", "/dev/null", &path])?;
+        let out = run_git(
+            &repo_path,
+            &["diff", "--no-index", "--", "/dev/null", &path],
+        )?;
         // --no-index exits 1 on a real difference, that's not a failure
         if out.success || !out.stdout.is_empty() {
             return Ok(out.stdout);
@@ -486,7 +580,10 @@ fn uncommit_to_sync(repo_path: String, target_hash: String) -> Result<CommandRes
     if !result.success {
         return Ok(CommandResult::failure(&command, result.stderr));
     }
-    Ok(CommandResult::ok(&command, json!({ "before": short_hash(&old_head), "after": short_hash(&target_hash) })))
+    Ok(CommandResult::ok(
+        &command,
+        json!({ "before": short_hash(&old_head), "after": short_hash(&target_hash) }),
+    ))
 }
 
 // cheap "did anything change" snapshot (HEAD + branch + status), polled so the app notices changes made outside it
@@ -542,7 +639,11 @@ pub async fn list_branches(repo_path: String) -> Result<Vec<BranchInfo>, String>
 fn list_branches_sync(repo_path: String) -> Result<Vec<BranchInfo>, String> {
     let out = run_git(
         &repo_path,
-        &["for-each-ref", "refs/heads", "--format=%(HEAD)|%(refname:short)|%(upstream:short)"],
+        &[
+            "for-each-ref",
+            "refs/heads",
+            "--format=%(HEAD)|%(refname:short)|%(upstream:short)",
+        ],
     )?;
     if !out.success {
         return Err(out.stderr);
@@ -558,7 +659,11 @@ fn list_branches_sync(repo_path: String) -> Result<Vec<BranchInfo>, String> {
                 return None;
             }
             let name = parts[1].to_string();
-            let upstream = parts.get(2).map(|s| s.trim()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+            let upstream = parts
+                .get(2)
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
             let (ahead, behind) = match &upstream {
                 Some(u) => ahead_behind(&repo_path, &name, u),
                 None => (0, 0),
@@ -585,7 +690,8 @@ pub async fn switch_branch(repo_path: String, branch: String) -> Result<CommandR
 
 fn switch_branch_sync(repo_path: String, branch: String) -> Result<CommandResult, String> {
     let command = display_command(&["checkout", &branch]);
-    let previous_branch = super::current_branch_name(&repo_path).unwrap_or_else(|_| "unknown".to_string());
+    let previous_branch =
+        super::current_branch_name(&repo_path).unwrap_or_else(|_| "unknown".to_string());
     let result = run_git(&repo_path, &["checkout", &branch])?;
     // git itself refuses safely if switching would overwrite uncommitted changes
     if !result.success {
@@ -598,13 +704,21 @@ fn switch_branch_sync(repo_path: String, branch: String) -> Result<CommandResult
 }
 
 #[tauri::command]
-pub async fn create_branch(repo_path: String, name: String, start_point: String) -> Result<CommandResult, String> {
+pub async fn create_branch(
+    repo_path: String,
+    name: String,
+    start_point: String,
+) -> Result<CommandResult, String> {
     tauri::async_runtime::spawn_blocking(move || create_branch_sync(repo_path, name, start_point))
         .await
         .map_err(|e| format!("internal error: {e}"))?
 }
 
-fn create_branch_sync(repo_path: String, name: String, start_point: String) -> Result<CommandResult, String> {
+fn create_branch_sync(
+    repo_path: String,
+    name: String,
+    start_point: String,
+) -> Result<CommandResult, String> {
     let command = display_command(&["checkout", "-b", &name, &start_point]);
     let result = run_git(&repo_path, &["checkout", "-b", &name, &start_point])?;
     if !result.success {
@@ -617,21 +731,38 @@ fn create_branch_sync(repo_path: String, name: String, start_point: String) -> R
 }
 
 #[tauri::command]
-pub async fn undo_create_branch(repo_path: String, name: String, start_point: String) -> Result<CommandResult, String> {
-    tauri::async_runtime::spawn_blocking(move || undo_create_branch_sync(repo_path, name, start_point))
-        .await
-        .map_err(|e| format!("internal error: {e}"))?
+pub async fn undo_create_branch(
+    repo_path: String,
+    name: String,
+    start_point: String,
+) -> Result<CommandResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        undo_create_branch_sync(repo_path, name, start_point)
+    })
+    .await
+    .map_err(|e| format!("internal error: {e}"))?
 }
 
 // switches back to start_point and deletes the branch just created - refuses if it already has commits of its own
-fn undo_create_branch_sync(repo_path: String, name: String, start_point: String) -> Result<CommandResult, String> {
-    let command = format!("{} && {}", display_command(&["checkout", &start_point]), display_command(&["branch", "-d", &name]));
+fn undo_create_branch_sync(
+    repo_path: String,
+    name: String,
+    start_point: String,
+) -> Result<CommandResult, String> {
+    let command = format!(
+        "{} && {}",
+        display_command(&["checkout", &start_point]),
+        display_command(&["branch", "-d", &name])
+    );
 
-    let ahead = run_git(&repo_path, &["rev-list", "--count", &format!("{start_point}..{name}")])?
-        .stdout
-        .trim()
-        .parse::<u32>()
-        .unwrap_or(0);
+    let ahead = run_git(
+        &repo_path,
+        &["rev-list", "--count", &format!("{start_point}..{name}")],
+    )?
+    .stdout
+    .trim()
+    .parse::<u32>()
+    .unwrap_or(0);
     if ahead > 0 {
         return Ok(CommandResult::failure(
             &command,
@@ -650,7 +781,10 @@ fn undo_create_branch_sync(repo_path: String, name: String, start_point: String)
     if !delete.success {
         return Ok(CommandResult::failure(&command, delete.stderr));
     }
-    Ok(CommandResult::ok(&command, json!({ "before": name, "after": start_point })))
+    Ok(CommandResult::ok(
+        &command,
+        json!({ "before": name, "after": start_point }),
+    ))
 }
 
 // safe undo: reverts each commit after target, newest first - adds new commits, never rewrites history
@@ -666,11 +800,15 @@ fn revert_to_commit_sync(repo_path: String, target: String) -> Result<CommandRes
     let command = display_command(&["revert", "--no-edit", &range]);
 
     // target must actually be an ancestor of HEAD - the graph shows every branch, so a click could land on an unrelated one
-    let is_ancestor = run_git(&repo_path, &["merge-base", "--is-ancestor", &target, "HEAD"])?;
+    let is_ancestor = run_git(
+        &repo_path,
+        &["merge-base", "--is-ancestor", &target, "HEAD"],
+    )?;
     if !is_ancestor.success {
         return Ok(CommandResult::failure(
             &command,
-            "that commit isn't in your current branch's history, so there's nothing to revert to.".to_string(),
+            "that commit isn't in your current branch's history, so there's nothing to revert to."
+                .to_string(),
         ));
     }
 
@@ -680,7 +818,10 @@ fn revert_to_commit_sync(repo_path: String, target: String) -> Result<CommandRes
         .parse::<u32>()
         .unwrap_or(0);
     if commits == 0 {
-        return Ok(CommandResult::failure(&command, "that's already the current commit — nothing to revert.".to_string()));
+        return Ok(CommandResult::failure(
+            &command,
+            "that's already the current commit — nothing to revert.".to_string(),
+        ));
     }
 
     let before_head = run_git(&repo_path, &["rev-parse", "HEAD"])?.stdout;
@@ -730,24 +871,35 @@ fn split_into_hunks(diff: &str) -> (String, Vec<String>) {
 // builds a single-hunk patch git apply can consume - header + one hunk, always ending in a newline
 fn single_hunk_patch(diff: &str, hunk_index: usize) -> Result<String, String> {
     let (header, hunks) = split_into_hunks(diff);
-    let hunk = hunks
-        .get(hunk_index)
-        .ok_or_else(|| "that change isn't there anymore — the file may have changed. refresh and try again.".to_string())?;
+    let hunk = hunks.get(hunk_index).ok_or_else(|| {
+        "that change isn't there anymore — the file may have changed. refresh and try again."
+            .to_string()
+    })?;
     Ok(format!("{header}\n{hunk}\n"))
 }
 
 // like single_hunk_patch, but keeping only selected +/- lines - the finer-than-a-hunk granularity per-line checkboxes need
-fn selected_hunk_patch(diff: &str, hunk_index: usize, selected: &HashSet<usize>, reverse: bool) -> Result<String, String> {
+fn selected_hunk_patch(
+    diff: &str,
+    hunk_index: usize,
+    selected: &HashSet<usize>,
+    reverse: bool,
+) -> Result<String, String> {
     let (header, hunks) = split_into_hunks(diff);
-    let hunk = hunks
-        .get(hunk_index)
-        .ok_or_else(|| "that change isn't there anymore — the file may have changed. refresh and try again.".to_string())?;
+    let hunk = hunks.get(hunk_index).ok_or_else(|| {
+        "that change isn't there anymore — the file may have changed. refresh and try again."
+            .to_string()
+    })?;
     let body = rebuild_hunk_from_selection(hunk, selected, reverse)?;
     Ok(format!("{header}\n{body}"))
 }
 
 // rebuilds a hunk from selected lines (index 0 = the "@@" header, matching parseDiff); reverse flips unselected-line handling since staging targets the index but discarding targets the working tree
-fn rebuild_hunk_from_selection(hunk: &str, selected: &HashSet<usize>, reverse: bool) -> Result<String, String> {
+fn rebuild_hunk_from_selection(
+    hunk: &str,
+    selected: &HashSet<usize>,
+    reverse: bool,
+) -> Result<String, String> {
     let mut body = String::new();
     let mut any_change = false;
     let mut last_included = true;
@@ -853,30 +1005,53 @@ fn file_hunks_sync(repo_path: String, path: String) -> Result<FileHunks, String>
     }
     let (_, hunks) = split_into_hunks(&diff.stdout);
     let whole_file_only = hunks.is_empty() && !diff.stdout.trim().is_empty();
-    Ok(FileHunks { hunks, whole_file_only })
+    Ok(FileHunks {
+        hunks,
+        whole_file_only,
+    })
 }
 
 // stages one hunk; hunk_index is re-resolved against a fresh diff so a stale index fails clearly
 #[tauri::command]
 pub async fn stage_hunk(repo_path: String, path: String, hunk_index: usize) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || apply_one_hunk(&repo_path, &path, hunk_index, &["apply", "--cached"]))
-        .await
-        .map_err(|e| format!("internal error: {e}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        apply_one_hunk(&repo_path, &path, hunk_index, &["apply", "--cached"])
+    })
+    .await
+    .map_err(|e| format!("internal error: {e}"))?
 }
 
 // discards one hunk from the working tree, leaving the rest of the file untouched
 #[tauri::command]
-pub async fn discard_hunk(repo_path: String, path: String, hunk_index: usize) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || apply_one_hunk(&repo_path, &path, hunk_index, &["apply", "--reverse"]))
-        .await
-        .map_err(|e| format!("internal error: {e}"))?
+pub async fn discard_hunk(
+    repo_path: String,
+    path: String,
+    hunk_index: usize,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        apply_one_hunk(&repo_path, &path, hunk_index, &["apply", "--reverse"])
+    })
+    .await
+    .map_err(|e| format!("internal error: {e}"))?
 }
 
 // stages only the given lines within one hunk - finer than stage_hunk, for a hunk that mixes wanted and unwanted changes
 #[tauri::command]
-pub async fn stage_hunk_lines(repo_path: String, path: String, hunk_index: usize, lines: Vec<usize>) -> Result<(), String> {
+pub async fn stage_hunk_lines(
+    repo_path: String,
+    path: String,
+    hunk_index: usize,
+    lines: Vec<usize>,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        apply_selected_hunk_lines(&repo_path, &path, hunk_index, &lines.into_iter().collect(), false, &["apply", "--cached", "--recount"])
+        apply_selected_hunk_lines(
+            &repo_path,
+            &path,
+            hunk_index,
+            &lines.into_iter().collect(),
+            false,
+            &["apply", "--cached", "--recount"],
+        )
     })
     .await
     .map_err(|e| format!("internal error: {e}"))?
@@ -884,9 +1059,21 @@ pub async fn stage_hunk_lines(repo_path: String, path: String, hunk_index: usize
 
 // line-level sibling of discard_hunk
 #[tauri::command]
-pub async fn discard_hunk_lines(repo_path: String, path: String, hunk_index: usize, lines: Vec<usize>) -> Result<(), String> {
+pub async fn discard_hunk_lines(
+    repo_path: String,
+    path: String,
+    hunk_index: usize,
+    lines: Vec<usize>,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        apply_selected_hunk_lines(&repo_path, &path, hunk_index, &lines.into_iter().collect(), true, &["apply", "--reverse", "--recount"])
+        apply_selected_hunk_lines(
+            &repo_path,
+            &path,
+            hunk_index,
+            &lines.into_iter().collect(),
+            true,
+            &["apply", "--reverse", "--recount"],
+        )
     })
     .await
     .map_err(|e| format!("internal error: {e}"))?
@@ -912,7 +1099,12 @@ fn apply_selected_hunk_lines(
     Ok(())
 }
 
-fn apply_one_hunk(repo_path: &str, path: &str, hunk_index: usize, apply_args: &[&str]) -> Result<(), String> {
+fn apply_one_hunk(
+    repo_path: &str,
+    path: &str,
+    hunk_index: usize,
+    apply_args: &[&str],
+) -> Result<(), String> {
     let diff = unstaged_diff(repo_path, path)?;
     if !diff.success {
         return Err(diff.stderr);
@@ -921,6 +1113,423 @@ fn apply_one_hunk(repo_path: &str, path: &str, hunk_index: usize, apply_args: &[
     let result = run_git_with_stdin(repo_path, apply_args, &patch)?;
     if !result.success {
         return Err(result.stderr);
+    }
+    Ok(())
+}
+
+// commits reachable from `to` but not `from`, e.g. "HEAD..target" - shared by merge preview/rebase preflight
+fn rev_list_count(repo_path: &str, range: &str) -> Result<u32, String> {
+    let out = run_git(repo_path, &["rev-list", "--count", range])?;
+    if !out.success {
+        return Err(out.stderr);
+    }
+    Ok(out.stdout.trim().parse().unwrap_or(0))
+}
+
+// paths git currently considers unmerged - the same check that gates the conflict UI's continue button
+fn conflicted_files_sync(repo_path: &str) -> Result<Vec<String>, String> {
+    let out = run_git(repo_path, &["diff", "--name-only", "--diff-filter=U"])?;
+    if !out.success {
+        return Err(out.stderr);
+    }
+    Ok(out
+        .stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|s| s.to_string())
+        .collect())
+}
+
+#[tauri::command]
+pub async fn conflicted_files(repo_path: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || conflicted_files_sync(&repo_path))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+// ===== merge =====
+
+#[derive(Debug, Serialize)]
+pub struct MergePreview {
+    // "fastForward" | "clean" | "conflict"
+    pub outcome: String,
+    // commits target has that the current branch doesn't - what merging would bring in
+    pub commits: u32,
+    // populated only when outcome is "conflict"
+    pub files: Vec<String>,
+    pub current_branch: String,
+}
+
+// `git merge-tree --write-tree`'s output on conflict: an oid line, then one line per
+// (mode, object, stage, path) per conflicted file, then a blank line, then info messages -
+// see `git help merge-tree`. no blank line separates the oid from the file lines.
+fn parse_merge_tree_conflict_files(stdout: &str) -> Vec<String> {
+    let mut files: Vec<String> = Vec::new();
+    for line in stdout.lines().skip(1) {
+        if line.is_empty() {
+            break;
+        }
+        if let Some(path) = line.split('\t').nth(1) {
+            if !files.iter().any(|f| f == path) {
+                files.push(path.to_string());
+            }
+        }
+    }
+    files
+}
+
+// trial merge via the `merge-tree` plumbing command - touches neither the working directory nor
+// the index, so this is safe to run just to preview what a real merge would do
+#[tauri::command]
+pub async fn merge_preview(repo_path: String, target: String) -> Result<MergePreview, String> {
+    tauri::async_runtime::spawn_blocking(move || merge_preview_sync(repo_path, target))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn merge_preview_sync(repo_path: String, target: String) -> Result<MergePreview, String> {
+    let current_branch = super::current_branch_name(&repo_path)?;
+    let commits = rev_list_count(&repo_path, &format!("HEAD..{target}"))?;
+
+    // fast-forward: the current branch has no commits of its own since it diverged, so it can
+    // just move its pointer up to target - no trial merge needed, there's nothing to combine
+    let is_ff = run_git(
+        &repo_path,
+        &["merge-base", "--is-ancestor", "HEAD", &target],
+    )?
+    .success;
+    if is_ff {
+        return Ok(MergePreview {
+            outcome: "fastForward".to_string(),
+            commits,
+            files: vec![],
+            current_branch,
+        });
+    }
+
+    let mt = run_git(&repo_path, &["merge-tree", "--write-tree", "HEAD", &target])?;
+    if mt.success {
+        return Ok(MergePreview {
+            outcome: "clean".to_string(),
+            commits,
+            files: vec![],
+            current_branch,
+        });
+    }
+
+    let files = parse_merge_tree_conflict_files(&mt.stdout);
+    if files.is_empty() {
+        // exit code wasn't 0 or the usual "1 = conflict" - something actually went wrong
+        return Err(mt.stderr);
+    }
+    Ok(MergePreview {
+        outcome: "conflict".to_string(),
+        commits,
+        files,
+        current_branch,
+    })
+}
+
+// runs the real merge. on conflict, returns a paused CommandResult (see `CommandResult::conflict`)
+// instead of erroring - resolving happens outside the app, then continue_merge finishes it
+#[tauri::command]
+pub async fn merge_branch(repo_path: String, target: String) -> Result<CommandResult, String> {
+    tauri::async_runtime::spawn_blocking(move || merge_branch_sync(repo_path, target))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn merge_branch_sync(repo_path: String, target: String) -> Result<CommandResult, String> {
+    let command = display_command(&["merge", "--no-edit", &target]);
+    let current_branch = super::current_branch_name(&repo_path).unwrap_or_default();
+    let commits = rev_list_count(&repo_path, &format!("HEAD..{target}"))?;
+    let was_fast_forward = run_git(
+        &repo_path,
+        &["merge-base", "--is-ancestor", "HEAD", &target],
+    )?
+    .success;
+    let before_head = run_git(&repo_path, &["rev-parse", "HEAD"])?.stdout;
+
+    // -c core.editor=true: never pop an editor for the merge commit message - there's no
+    // terminal to show it on, and --no-edit already means we don't want to change the message anyway
+    let result = run_git(
+        &repo_path,
+        &["-c", "core.editor=true", "merge", "--no-edit", &target],
+    )?;
+
+    if !result.success {
+        let unmerged = conflicted_files_sync(&repo_path)?;
+        if !unmerged.is_empty() {
+            return Ok(CommandResult::conflict_with_target(
+                &command,
+                &current_branch,
+                &target,
+                unmerged,
+            ));
+        }
+        return Ok(CommandResult::failure(&command, result.stderr));
+    }
+
+    let after_head = run_git(&repo_path, &["rev-parse", "HEAD"])?.stdout;
+    Ok(CommandResult::ok(
+        &command,
+        json!({
+            "commits": commits,
+            "branch": current_branch,
+            "target": target,
+            "fastForward": was_fast_forward,
+            "before": short_hash(&before_head),
+            "after": short_hash(&after_head),
+        }),
+    ))
+}
+
+// finishes a paused merge once every conflict is resolved - the "continue" half of the shared conflict UI
+#[tauri::command]
+pub async fn continue_merge(repo_path: String) -> Result<CommandResult, String> {
+    tauri::async_runtime::spawn_blocking(move || continue_merge_sync(repo_path))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn continue_merge_sync(repo_path: String) -> Result<CommandResult, String> {
+    let command = display_command(&["commit", "--no-edit"]);
+    let current_branch = super::current_branch_name(&repo_path).unwrap_or_default();
+    let unmerged = conflicted_files_sync(&repo_path)?;
+    if !unmerged.is_empty() {
+        return Ok(CommandResult::conflict(&command, &current_branch, unmerged));
+    }
+
+    let result = run_git(
+        &repo_path,
+        &["-c", "core.editor=true", "commit", "--no-edit"],
+    )?;
+    if !result.success {
+        return Ok(CommandResult::failure(&command, result.stderr));
+    }
+    let after_head = run_git(&repo_path, &["rev-parse", "HEAD"])?.stdout;
+    // no "target" here - continue doesn't track which branch the original merge was combining in,
+    // only the frontend's paused-operation state does; it patches the real one in client-side
+    Ok(CommandResult::ok(
+        &command,
+        json!({ "branch": current_branch, "after": short_hash(&after_head) }),
+    ))
+}
+
+// the "abort" half of the shared conflict UI - always available while a merge is paused
+#[tauri::command]
+pub async fn abort_merge(repo_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || abort_merge_sync(&repo_path))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn abort_merge_sync(repo_path: &str) -> Result<(), String> {
+    let out = run_git(repo_path, &["merge", "--abort"])?;
+    if !out.success {
+        return Err(out.stderr);
+    }
+    Ok(())
+}
+
+// ===== rebase =====
+
+#[derive(Debug, Serialize)]
+pub struct RebasePreflight {
+    pub current_branch: String,
+    pub target: String,
+    // commits that would be replayed - everything on the current branch since it diverged from target
+    pub total_commits: u32,
+    // of those, how many are already reachable from the remote tracking branch - already pushed
+    pub already_pushed_count: u32,
+    pub has_upstream: bool,
+    pub upstream: Option<String>,
+}
+
+// the safety check that has to run before any rebase preview - see DESIGN.md 2.6
+#[tauri::command]
+pub async fn rebase_preflight(
+    repo_path: String,
+    target: String,
+) -> Result<RebasePreflight, String> {
+    tauri::async_runtime::spawn_blocking(move || rebase_preflight_sync(repo_path, target))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn rebase_preflight_sync(repo_path: String, target: String) -> Result<RebasePreflight, String> {
+    let current_branch = super::current_branch_name(&repo_path)?;
+    let range = format!("{target}..HEAD");
+    let total_commits = rev_list_count(&repo_path, &range)?;
+
+    let upstream = upstream_ref(&repo_path);
+    let already_pushed_count = match &upstream {
+        Some(u) => {
+            // commits in range that are NOT reachable from upstream = not yet pushed;
+            // subtracting from the total gives how many already are
+            let not_pushed = run_git(&repo_path, &["rev-list", "--count", &range, "--not", u])?
+                .stdout
+                .trim()
+                .parse::<u32>()
+                .unwrap_or(0);
+            total_commits.saturating_sub(not_pushed)
+        }
+        None => 0,
+    };
+
+    Ok(RebasePreflight {
+        current_branch,
+        target,
+        total_commits,
+        already_pushed_count,
+        has_upstream: upstream.is_some(),
+        upstream,
+    })
+}
+
+// runs the real rebase. on conflict, returns a paused CommandResult, same as merge_branch
+#[tauri::command]
+pub async fn rebase_branch(repo_path: String, target: String) -> Result<CommandResult, String> {
+    tauri::async_runtime::spawn_blocking(move || rebase_branch_sync(repo_path, target))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn rebase_branch_sync(repo_path: String, target: String) -> Result<CommandResult, String> {
+    let command = display_command(&["rebase", &target]);
+    let current_branch = super::current_branch_name(&repo_path).unwrap_or_default();
+    let commits = rev_list_count(&repo_path, &format!("{target}..HEAD"))?;
+    let before_head = run_git(&repo_path, &["rev-parse", "HEAD"])?.stdout;
+
+    let result = run_git(&repo_path, &["-c", "core.editor=true", "rebase", &target])?;
+
+    if !result.success {
+        let unmerged = conflicted_files_sync(&repo_path)?;
+        if !unmerged.is_empty() {
+            return Ok(CommandResult::conflict_with_target(
+                &command,
+                &current_branch,
+                &target,
+                unmerged,
+            ));
+        }
+        return Ok(CommandResult::failure(&command, result.stderr));
+    }
+
+    let after_head = run_git(&repo_path, &["rev-parse", "HEAD"])?.stdout;
+    Ok(CommandResult::ok(
+        &command,
+        json!({
+            "commits": commits,
+            "branch": current_branch,
+            "target": target,
+            "before": short_hash(&before_head),
+            "after": short_hash(&after_head),
+        }),
+    ))
+}
+
+#[derive(Debug, Serialize)]
+pub struct RebaseStatus {
+    pub in_progress: bool,
+    // 1-based index of the commit currently being replayed
+    pub current: u32,
+    pub total: u32,
+}
+
+// reads git's own progress bookkeeping straight off disk - works whether the rebase is actively
+// running (frontend polls this while awaiting rebase_branch) or paused on a conflict (polls it
+// while the conflict dialog is open, so "resolving commit 2 of 4" stays accurate)
+#[tauri::command]
+pub async fn rebase_status(repo_path: String) -> Result<RebaseStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || rebase_status_sync(&repo_path))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn rebase_status_sync(repo_path: &str) -> Result<RebaseStatus, String> {
+    let git_dir = std::path::Path::new(repo_path).join(".git");
+    // "rebase-merge" is the default backend since git 2.26; "rebase-apply" backs the older
+    // apply-based rebase (e.g. when --whitespace or similar options are in play) and numbers its
+    // files differently ("next" = current step, "last" = total, vs "msgnum"/"end")
+    for (subdir, current_file, total_file) in [
+        ("rebase-merge", "msgnum", "end"),
+        ("rebase-apply", "next", "last"),
+    ] {
+        let dir = git_dir.join(subdir);
+        if !dir.is_dir() {
+            continue;
+        }
+        let read_num = |name: &str| -> u32 {
+            std::fs::read_to_string(dir.join(name))
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(0)
+        };
+        return Ok(RebaseStatus {
+            in_progress: true,
+            current: read_num(current_file),
+            total: read_num(total_file),
+        });
+    }
+    Ok(RebaseStatus {
+        in_progress: false,
+        current: 0,
+        total: 0,
+    })
+}
+
+// the "continue" half of the shared conflict UI, for a paused rebase - resolving the current
+// commit can immediately hit a conflict on the *next* one, so this can return another paused result
+#[tauri::command]
+pub async fn continue_rebase(repo_path: String) -> Result<CommandResult, String> {
+    tauri::async_runtime::spawn_blocking(move || continue_rebase_sync(repo_path))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn continue_rebase_sync(repo_path: String) -> Result<CommandResult, String> {
+    let command = display_command(&["rebase", "--continue"]);
+    let current_branch = super::current_branch_name(&repo_path).unwrap_or_default();
+    let unmerged = conflicted_files_sync(&repo_path)?;
+    if !unmerged.is_empty() {
+        return Ok(CommandResult::conflict(&command, &current_branch, unmerged));
+    }
+
+    let result = run_git(
+        &repo_path,
+        &["-c", "core.editor=true", "rebase", "--continue"],
+    )?;
+    if !result.success {
+        let unmerged = conflicted_files_sync(&repo_path)?;
+        if !unmerged.is_empty() {
+            // the next commit in the sequence conflicted too - stay paused
+            return Ok(CommandResult::conflict(&command, &current_branch, unmerged));
+        }
+        return Ok(CommandResult::failure(&command, result.stderr));
+    }
+
+    let after_head = run_git(&repo_path, &["rev-parse", "HEAD"])?.stdout;
+    // no "target" here either, same reason as continue_merge_sync above - the frontend patches
+    // in the real one from its own paused-operation state
+    Ok(CommandResult::ok(
+        &command,
+        json!({ "branch": current_branch, "after": short_hash(&after_head) }),
+    ))
+}
+
+// the "abort" half of the shared conflict UI, for a paused rebase - always available
+#[tauri::command]
+pub async fn abort_rebase(repo_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || abort_rebase_sync(&repo_path))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn abort_rebase_sync(repo_path: &str) -> Result<(), String> {
+    let out = run_git(repo_path, &["rebase", "--abort"])?;
+    if !out.success {
+        return Err(out.stderr);
     }
     Ok(())
 }

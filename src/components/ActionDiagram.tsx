@@ -308,6 +308,24 @@ export default function ActionDiagram({ kind, count, branch, remote, from, targe
       return <UndoDiagram target={target} count={count} />;
     case "undo":
       return <RewindDiagram beforeLabel={before ?? "before"} afterLabel={after ?? "now"} />;
+    case "merge":
+      return (
+        <FlowDiagram
+          direction="leftToRight"
+          count={count}
+          left={{ icon: <BranchIcon />, title: "merging in", sublabel: truncate(target), color: "var(--lane-2)" }}
+          right={{ icon: <BranchIcon />, title: "your branch", sublabel: truncate(branch), color: "var(--lane-1)" }}
+        />
+      );
+    case "rebase":
+      return (
+        <FlowDiagram
+          direction="leftToRight"
+          count={count}
+          left={{ icon: <BranchIcon />, title: "replaying", sublabel: truncate(branch), color: "var(--lane-1)" }}
+          right={{ icon: <BranchIcon />, title: "onto", sublabel: truncate(target), color: "var(--lane-4)" }}
+        />
+      );
     default:
       return null;
   }
