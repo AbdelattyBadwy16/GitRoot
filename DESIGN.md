@@ -1,4 +1,4 @@
-# Sprout — design document (v1)
+# GitRoot — design document (v1)
 
 ## 1. What is this project
 
@@ -18,7 +18,12 @@ natural language commands are v2 (see [section 4](#4-scope)).
 
 ### 2.1 Getting started
 
-1. Launch the app.
+1. Launch the app. If `git` isn't found on the system, a friendly screen
+   explains this and points to install instructions, rather than
+   failing later with a confusing error. This matters more than it
+   might seem — the target audience is git beginners, and on Windows
+   specifically, git isn't pre-installed the way it often is on macOS
+   or Linux.
 2. A folder picker opens — you select your project's folder.
 3. The app checks it's a valid git repository (looks for a `.git`
    directory / runs `git rev-parse --is-inside-work-tree`).
@@ -85,7 +90,7 @@ Two panels, side by side.
 After you click a button, this panel explains the result in plain
 language — not the raw git output. Two tiers, and this is a deliberate
 split:
- 
+
 - **Most commands** (pull, push, commit, stash, merge with no
   conflicts): run immediately, then explain the result. E.g. "pulled 3
   commits from origin/main" or "stashed 2 changed files."
@@ -153,6 +158,64 @@ flowchart TD
   for status), or the `git2` crate (Rust bindings for libgit2) if
   repeated process-spawning turns out to be slow on large repos.
 
+### 2.6 Merge and rebase, in detail
+
+Both are more involved than the other commands, so they get their own
+design pass rather than a one-line dictionary entry.
+
+**Merge**
+
+Before running anything, use `git merge-tree` (a plumbing command that
+performs a trial merge without touching the working directory or index)
+to know in advance which of three outcomes is coming:
+
+- **Fast-forward** — no new commits on the current branch since it
+  diverged, so this just moves the branch pointer. No new merge commit.
+  "this will fast-forward main to include feature-login's 3 commits."
+- **Clean merge** — both sides diverged, but git can combine them
+  automatically. "this will merge feature-login into main, 3 commits,
+  no conflicts."
+- **Would conflict** — name the specific files. "this will merge
+  feature-login into main, but auth.js and config.json conflict —
+  you'll need to resolve them."
+
+After: explain the result if clean/fast-forward. If it conflicts, pause
+— same pattern as everything else — naming exactly which files.
+
+**Rebase**
+
+The single most important safety check, and it has to happen *before*
+any preview: compare the commits about to be rebased against the
+remote tracking branch (`origin/<branch>`). If any of them already
+exist there — meaning they've been pushed — show a strong warning:
+"some of these commits are already on your remote. rebasing rewrites
+their history, which can cause real problems for anyone who's already
+pulled them. continue?" This matters more than conflict handling —
+it's about protecting other people's work, not just the user's own.
+
+After that check, preview the plan ("this will replay 4 commits from
+feature-x onto main, one at a time, giving them new commit hashes"),
+then execute while tracking progress, since rebase happens commit by
+commit ("resolving commit 2 of 4"). A conflict mid-way pauses exactly
+like a merge conflict, but also shows which commit in the sequence
+you're on. Abort must always be one click away — `git rebase --abort`
+is the actual safety net here, more than any UI copy.
+
+**Honest asymmetry between the two:** merge's preview is reliable —
+`merge-tree` gives a real answer before anything runs. Rebase's
+preview can't promise the same, since each commit's outcome can depend
+on how the previous one was resolved. It's a statement of intent, not
+a guarantee.
+
+**Scope stays the same either way:** just "rebase current branch onto
+target." No interactive rebase — no squashing, reordering, or editing
+commits. That line is what keeps this safe to expose at all; full
+interactive rebase remains v2 regardless of when this ships.
+
+Both operations share the same pause/conflict UI — build it once as a
+shared component rather than duplicating it for merge and rebase
+separately.
+
 ## 3. Tech stack
 
 | Layer | Choice |
@@ -210,4 +273,4 @@ a simple "you're not logged in" message, not git's raw error.
 - [ ] Icon set for the command buttons
 - [ ] Does the diff view get its own panel, or live inline above the
       commit box?
-- [ ] Confirm "Sprout" isn't taken (name, package registries, domains)
+- [ ] Confirm "GitRoot" isn't taken (name, package registries, domains)

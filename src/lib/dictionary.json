@@ -49,5 +49,28 @@
     "meaning": "reverses your last action so things are back to how they were.",
     "result": "undone.",
     "steps": ["found exactly what your last action changed", "reversed it", "nothing else was touched"]
+  },
+  "merge": {
+    "meaning": "combines {target}'s history into {branch}.",
+    "result": "merged {target} into {branch} — {n} commit{s}, no conflicts.",
+    "resultZero": "{target} was already merged into {branch} — nothing to do.",
+    "resultFastForward": "fast-forwarded {branch} to include {target}'s {n} commit{s}.",
+    "steps": ["checked how {branch} and {target} relate", "combined {target}'s {n} commit{s} into {branch}", "{branch} now has a new merge commit joining both histories"],
+    "stepsFastForward": ["checked how {branch} and {target} relate", "{branch} had no commits of its own since diverging, so it just moved forward", "no new merge commit was needed"],
+    "fastForward": "this will fast-forward {branch} to include {target}'s {n} commits.",
+    "clean": "this will merge {target} into {branch}, {n} commits, no conflicts.",
+    "wouldConflict": "this will merge {target} into {branch}, but {files} conflict — you'll need to resolve them.",
+    "conflictPaused": "git paused the merge here — {files} conflict. resolve them in your editor or terminal, then come back and continue.",
+    "risky": false
+  },
+  "rebase": {
+    "meaning": "replays {branch}'s commits one at a time on top of {target}, giving each one a new commit hash.",
+    "result": "replayed {n} commit{s} from {branch} onto {target}.",
+    "steps": ["found the {n} commit{s} unique to {branch}", "replayed each one on top of {target}, one at a time", "{branch} now points at the last replayed commit"],
+    "alreadyPushedWarning": "some of these commits are already on your remote. rebasing rewrites their history, which can cause real problems for anyone who's already pulled them. continue?",
+    "plan": "this will replay {n} commits from {branch} onto {target}, one at a time, giving them new commit hashes.",
+    "progress": "resolving commit {current} of {total}...",
+    "conflictPaused": "git paused the rebase on commit {current} of {total} — {files} conflict. resolve them in your editor or terminal, then come back and continue.",
+    "risky": true
   }
 }
