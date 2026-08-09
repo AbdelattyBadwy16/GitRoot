@@ -40,7 +40,7 @@ fn hard_timeout_kills_a_hung_git_process() {
             String::from_utf8_lossy(&out.stderr)
         );
     };
-    git(&["init", "-q"]);
+    git(&["init", "-q", "-b", "main"]);
     git(&["config", "user.email", "test@example.com"]);
     git(&["config", "user.name", "Test"]);
     git(&["remote", "add", "origin", "ext::sleep 120"]);
@@ -89,6 +89,8 @@ fn current_branch_name_works_before_the_first_commit() {
         .arg(&path)
         .arg("init")
         .arg("-q")
+        .arg("-b")
+        .arg("main")
         .output()
         .unwrap();
 
@@ -208,9 +210,9 @@ fn clone_repo_creates_a_named_subfolder_with_real_history() {
     };
     git(
         &dir.to_string_lossy(),
-        &["init", "--bare", "-q", &remote_path],
+        &["init", "--bare", "-q", "-b", "main", &remote_path],
     );
-    git(&seed_path, &["init", "-q"]);
+    git(&seed_path, &["init", "-q", "-b", "main"]);
     git(&seed_path, &["config", "user.email", "test@example.com"]);
     git(&seed_path, &["config", "user.name", "Test"]);
     git(&seed_path, &["remote", "add", "origin", &remote_path]);
@@ -258,7 +260,7 @@ fn check_git_identity_reads_the_repo_s_configured_name_and_email() {
     Command::new("git")
         .arg("-C")
         .arg(&path)
-        .args(["init", "-q"])
+        .args(["init", "-q", "-b", "main"])
         .output()
         .unwrap();
     Command::new("git")
@@ -291,7 +293,7 @@ fn git_config_value_returns_none_for_a_key_that_was_never_set() {
     Command::new("git")
         .arg("-C")
         .arg(&path)
-        .args(["init", "-q"])
+        .args(["init", "-q", "-b", "main"])
         .output()
         .unwrap();
 

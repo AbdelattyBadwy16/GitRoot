@@ -42,9 +42,16 @@ impl TestRepo {
 
         run(
             &dir,
-            &["init", "--bare", "-q", remote_dir.to_str().unwrap()],
+            &[
+                "init",
+                "--bare",
+                "-q",
+                "-b",
+                "main",
+                remote_dir.to_str().unwrap(),
+            ],
         );
-        run(&repo_dir, &["init", "-q"]);
+        run(&repo_dir, &["init", "-q", "-b", "main"]);
         run(&repo_dir, &["config", "user.email", "test@example.com"]);
         run(&repo_dir, &["config", "user.name", "Test"]);
         run(
@@ -1037,7 +1044,7 @@ fn commit_reports_no_before_head_on_the_very_first_commit_ever() {
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.to_string_lossy().to_string();
-    run_git(&path, &["init", "-q"]).unwrap();
+    run_git(&path, &["init", "-q", "-b", "main"]).unwrap();
     run_git(&path, &["config", "user.email", "test@example.com"]).unwrap();
     run_git(&path, &["config", "user.name", "Test"]).unwrap();
     std::fs::write(dir.join("a.txt"), "1\n").unwrap();
