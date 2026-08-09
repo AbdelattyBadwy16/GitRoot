@@ -6,6 +6,9 @@ import ActionDiagram from "./ActionDiagram";
 interface DetailsPanelProps {
   details: ActionDetails | null;
   running: string | null;
+  // live "resolving commit 2 of 4" text, polled while a rebase is in flight - replaces the plain
+  // "running rebase…" line when available
+  runningLabel?: string | null;
 }
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
@@ -20,7 +23,7 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 }
 
 // the right-hand column: full breakdown of the last command run, only visible in Learning Mode
-export default function DetailsPanel({ details, running }: DetailsPanelProps) {
+export default function DetailsPanel({ details, running, runningLabel }: DetailsPanelProps) {
   return (
     <div
       style={{
@@ -39,7 +42,7 @@ export default function DetailsPanel({ details, running }: DetailsPanelProps) {
       <AnimatePresence mode="wait">
         {running ? (
           <motion.div key="running" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ color: "var(--text-secondary)", fontSize: 13 }}>
-            running {running}…
+            {runningLabel ?? `running ${running}…`}
           </motion.div>
         ) : !details ? (
           <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.5 }}>

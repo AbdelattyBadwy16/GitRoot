@@ -87,7 +87,9 @@ fn assign_lanes(commits: &[RawCommit]) -> Vec<(usize, usize)> {
 
         // extra parents (merges) each need their own lane unless already tracked
         for extra_parent in commit.parents.iter().skip(1) {
-            let already_tracked = lanes.iter().any(|h| h.as_deref() == Some(extra_parent.as_str()));
+            let already_tracked = lanes
+                .iter()
+                .any(|h| h.as_deref() == Some(extra_parent.as_str()));
             if already_tracked {
                 continue;
             }
@@ -108,7 +110,10 @@ fn commits_reachable_from_remotes(
     raw: &[RawCommit],
     index_by_hash: &HashMap<&str, usize>,
 ) -> Result<HashSet<String>, String> {
-    let tips = run_git(repo_path, &["for-each-ref", "refs/remotes", "--format=%(objectname)"])?;
+    let tips = run_git(
+        repo_path,
+        &["for-each-ref", "refs/remotes", "--format=%(objectname)"],
+    )?;
     if !tips.success {
         return Err(tips.stderr);
     }
@@ -186,10 +191,7 @@ fn commit_graph_sync(repo_path: String, limit: usize) -> Result<CommitGraphData,
             if parts.len() < 6 {
                 return None;
             }
-            let parents = parts[1]
-                .split_whitespace()
-                .map(|s| s.to_string())
-                .collect();
+            let parents = parts[1].split_whitespace().map(|s| s.to_string()).collect();
             let refs = parts[5]
                 .split(", ")
                 .map(|s| s.trim().to_string())
@@ -210,7 +212,11 @@ fn commit_graph_sync(repo_path: String, limit: usize) -> Result<CommitGraphData,
     raw.truncate(limit);
 
     let positions = assign_lanes(&raw);
-    let lane_count = positions.iter().map(|(lane, _)| lane + 1).max().unwrap_or(0);
+    let lane_count = positions
+        .iter()
+        .map(|(lane, _)| lane + 1)
+        .max()
+        .unwrap_or(0);
 
     let index_by_hash: HashMap<&str, usize> = raw
         .iter()
@@ -240,7 +246,7 @@ fn commit_graph_sync(repo_path: String, limit: usize) -> Result<CommitGraphData,
 
     let commits = raw
         .into_iter()
-        .zip(positions.into_iter())
+        .zip(positions)
         .map(|(c, (lane, row))| {
             let pushed = on_remote.contains(c.hash.as_str());
             GraphCommit {

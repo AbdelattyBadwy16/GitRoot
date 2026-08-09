@@ -7,13 +7,26 @@ interface BranchesTabProps {
   onSwitch: (name: string) => void;
   onCreate: (name: string, startPoint: string) => void;
   busy: boolean;
+  // merge/rebase are heavier flows (preview, confirm, possibly a conflict pause) - App.tsx owns
+  // that state machine, this tab just reports which target branch was picked
+  onPickMergeTarget: (branch: string) => void;
+  onPickRebaseTarget: (branch: string) => void;
+  mergeBusy: boolean;
+  rebaseBusy: boolean;
 }
 
-// every local branch, switchable with a click, plus a form for creating a new one
-export default function BranchesTab({ branches, onSwitch, onCreate, busy }: BranchesTabProps) {
+// every local branch, switchable with a click, plus forms for creating one, merging one in, or
+// rebasing the current branch onto one
+export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPickMergeTarget, onPickRebaseTarget, mergeBusy, rebaseBusy }: BranchesTabProps) {
   const current = branches.find((b) => b.isCurrent)?.name ?? branches[0]?.name ?? "";
   const [newName, setNewName] = useState("");
   const [startPoint, setStartPoint] = useState(current);
+  const otherBranches = branches.filter((b) => !b.isCurrent);
+  const [mergeTarget, setMergeTarget] = useState(otherBranches[0]?.name ?? "");
+  const [rebaseTarget, setRebaseTarget] = useState(otherBranches[0]?.name ?? "");
+  // falls back to the first available branch if the picked one disappeared (deleted elsewhere, or just switched to)
+  const effectiveMergeTarget = otherBranches.some((b) => b.name === mergeTarget) ? mergeTarget : otherBranches[0]?.name ?? "";
+  const effectiveRebaseTarget = otherBranches.some((b) => b.name === rebaseTarget) ? rebaseTarget : otherBranches[0]?.name ?? "";
 
   // default start point follows the current branch until the user picks one themselves
   const [startPointTouched, setStartPointTouched] = useState(false);
@@ -160,6 +173,106 @@ export default function BranchesTab({ branches, onSwitch, onCreate, busy }: Bran
           create &amp; switch
         </motion.button>
       </div>
+
+      {otherBranches.length > 0 && (
+        <div style={{ display: "flex", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 220px", borderRadius: 10, border: "1px solid var(--border)", padding: 14, background: "var(--surface-1)" }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 4 }}>merge into {current}</div>
+            <p style={{ margin: "0 0 10px", fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.4 }}>
+              combines another branch's history into {current}.
+            </p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <select
+                value={effectiveMergeTarget}
+                onChange={(e) => setMergeTarget(e.target.value)}
+                disabled={mergeBusy}
+                style={{
+                  flex: 1,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: "var(--surface-0)",
+                  color: "var(--text-primary)",
+                  fontSize: 12.5,
+                  fontFamily: "ui-monospace, monospace",
+                }}
+              >
+                {otherBranches.map((b) => (
+                  <option key={b.name} value={b.name}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => effectiveMergeTarget && onPickMergeTarget(effectiveMergeTarget)}
+                disabled={mergeBusy || !effectiveMergeTarget}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: "linear-gradient(135deg, var(--lane-3), var(--lane-1))",
+                  color: "#fff",
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  cursor: mergeBusy || !effectiveMergeTarget ? "default" : "pointer",
+                  opacity: mergeBusy || !effectiveMergeTarget ? 0.5 : 1,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                merge
+              </button>
+            </div>
+          </div>
+
+          <div style={{ flex: "1 1 220px", borderRadius: 10, border: "1px solid var(--border)", padding: 14, background: "var(--surface-1)" }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 4 }}>rebase {current} onto</div>
+            <p style={{ margin: "0 0 10px", fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.4 }}>
+              replays {current}'s own commits on top of another branch, one at a time.
+            </p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <select
+                value={effectiveRebaseTarget}
+                onChange={(e) => setRebaseTarget(e.target.value)}
+                disabled={rebaseBusy}
+                style={{
+                  flex: 1,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: "var(--surface-0)",
+                  color: "var(--text-primary)",
+                  fontSize: 12.5,
+                  fontFamily: "ui-monospace, monospace",
+                }}
+              >
+                {otherBranches.map((b) => (
+                  <option key={b.name} value={b.name}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => effectiveRebaseTarget && onPickRebaseTarget(effectiveRebaseTarget)}
+                disabled={rebaseBusy || !effectiveRebaseTarget}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: 8,
+                  border: "1px solid color-mix(in srgb, var(--lane-4) 55%, transparent)",
+                  background: "color-mix(in srgb, var(--lane-4) 12%, var(--surface-1))",
+                  color: "var(--lane-4)",
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  cursor: rebaseBusy || !effectiveRebaseTarget ? "default" : "pointer",
+                  opacity: rebaseBusy || !effectiveRebaseTarget ? 0.5 : 1,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                rebase
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
