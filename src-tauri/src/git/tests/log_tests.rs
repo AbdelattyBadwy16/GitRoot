@@ -32,7 +32,7 @@ fn build_test_repo() -> String {
     };
     let write = |name: &str, contents: &str| std::fs::write(dir.join(name), contents).unwrap();
 
-    git(&["init", "-q"]);
+    git(&["init", "-q", "-b", "main"]);
     git(&["config", "user.email", "test@example.com"]);
     git(&["config", "user.name", "Test"]);
 
@@ -173,10 +173,12 @@ fn distinguishes_pushed_commits_from_local_only_ones() {
         .arg("init")
         .arg("--bare")
         .arg("-q")
+        .arg("-b")
+        .arg("main")
         .arg(&remote_dir)
         .output()
         .unwrap();
-    git(&["init", "-q"]);
+    git(&["init", "-q", "-b", "main"]);
     git(&["config", "user.email", "test@example.com"]);
     git(&["config", "user.name", "Test"]);
     git(&["remote", "add", "origin", remote_dir.to_str().unwrap()]);
@@ -242,7 +244,7 @@ fn pages_a_long_history_without_reshuffling_earlier_lanes() {
             String::from_utf8_lossy(&out.stderr)
         );
     };
-    git(&["init", "-q"]);
+    git(&["init", "-q", "-b", "main"]);
     git(&["config", "user.email", "test@example.com"]);
     git(&["config", "user.name", "Test"]);
     for i in 0..25 {
