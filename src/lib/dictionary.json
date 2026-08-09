@@ -1,0 +1,53 @@
+{
+  "pull": {
+    "meaning": "downloads new commits from the remote and merges them into your branch.",
+    "result": "pulled {n} commit{s} from {remote}.",
+    "resultZero": "{remote} had nothing new — you're already up to date.",
+    "steps": ["reached out to {remote}", "found {n} new commit{s} you didn't have yet", "merged them into {branch}"],
+    "stepsZero": ["reached out to {remote}", "it has nothing you don't already have"],
+    "authError": "you're not logged in to pull from this remote.",
+    "networkError": "couldn't reach {remote} — check your network or VPN connection."
+  },
+  "push": {
+    "meaning": "uploads your commits so the remote matches your branch.",
+    "result": "pushed {n} commit{s} to {remote}.",
+    "resultZero": "nothing to push — {remote} already matches your branch.",
+    "steps": ["checked what {remote} already has", "sent it the {n} commit{s} it was missing", "{remote} now matches {branch}"],
+    "stepsZero": ["checked {remote}", "it already matches your branch — nothing to send"],
+    "authError": "you're not logged in to push to this remote.",
+    "networkError": "couldn't reach {remote} — check your network or VPN connection."
+  },
+  "stash": {
+    "meaning": "sets uncommitted changes aside so your working directory is clean.",
+    "result": "saved {n} changed file{s} — bring them back with stash pop.",
+    "resultZero": "nothing to save — no changed files.",
+    "steps": ["took every tracked change out of your working directory", "saved {n} file{s} as a stash entry", "your working directory is clean now"],
+    "stepsZero": ["checked your working directory", "nothing tracked was changed — there was nothing to set aside"]
+  },
+  "commit": {
+    "meaning": "saves your staged changes as a new point in your branch's history.",
+    "result": "committed {n} file{s} to {branch}.",
+    "steps": ["packaged the {n} file{s} you staged", "created a new commit on {branch}", "{branch}'s tip moved forward to it"]
+  },
+  "switchBranch": {
+    "meaning": "points your working directory at a different branch.",
+    "result": "now on {branch}.",
+    "steps": ["checked your working directory was safe to switch", "moved HEAD to {branch}", "your files now match {branch}'s last commit"]
+  },
+  "createBranch": {
+    "meaning": "creates a new branch starting from {from}, and switches to it.",
+    "result": "now on {branch}.",
+    "steps": ["created a new branch pointer at {from}", "switched your working directory to it", "{branch} points at the same commit as {from} for now — they'll diverge once you commit"]
+  },
+  "revert": {
+    "meaning": "undoes commits by adding a new commit that reverses them — nothing is deleted from history.",
+    "result": "reverted {n} commit{s} back to {target}.",
+    "steps": ["found the {n} commit{s} after {target}", "created new commit{s} that undo exactly their changes", "nothing was deleted — {target} and everything after it still exist in history"],
+    "confirmText": "this adds new commit{s} that undo the {n} commit{s} after {target} — none of them are deleted, and this is safe even if they've been pushed. continue?"
+  },
+  "undo": {
+    "meaning": "reverses your last action so things are back to how they were.",
+    "result": "undone.",
+    "steps": ["found exactly what your last action changed", "reversed it", "nothing else was touched"]
+  }
+}

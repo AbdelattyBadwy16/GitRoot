@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/abdelattybadwy/.cargo/**)",
+      "Bash(xcode-select -p)",
+      "Bash(curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /private/tmp/claude-501/-Users-abdelattybadwy-Desktop-Projects-Sprout/50572efa-d95d-4ec2-aaf2-afeb7167fd31/scratchpad/rustup-init.sh)",
+      "Bash(sh /private/tmp/claude-501/-Users-abdelattybadwy-Desktop-Projects-Sprout/50572efa-d95d-4ec2-aaf2-afeb7167fd31/scratchpad/rustup-init.sh -y --default-toolchain stable --profile default)"
+    ]
+  }
+}
