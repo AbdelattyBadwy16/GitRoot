@@ -1,4 +1,4 @@
-# Sprout — design document (v1)
+# Sprout — design document
 
 ## 1. What is this project
 
