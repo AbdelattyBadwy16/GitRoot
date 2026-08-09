@@ -1,4 +1,4 @@
-# Sprout — design document (v1)
+# Gitroot — design document (v1)
 
 ## 1. What is this project
 
