@@ -3,7 +3,7 @@ import type { CommandResult } from "./gitCommands";
 
 type DictEntry = {
   meaning: string;
-  result: string;
+  result?: string;
   resultZero?: string;
   resultFastForward?: string;
   steps?: string[];
@@ -20,13 +20,22 @@ type DictEntry = {
   alreadyPushedWarning?: string;
   plan?: string;
   progress?: string;
+  soft?: string;
+  mixed?: string;
+  hard?: string;
+  modeSoft?: string;
+  modeMixed?: string;
+  modeHard?: string;
+  confirmDiscard?: string;
 };
 
 const dict = dictionary as unknown as Record<string, DictEntry>;
 
 export type CommandName = "pull" | "push" | "stash" | "commit";
 
-export type ActionKind = CommandName | "switchBranch" | "createBranch" | "revert" | "undo" | "merge" | "rebase";
+export type ActionKind = CommandName | "switchBranch" | "createBranch" | "revert" | "undo" | "merge" | "rebase" | "reset";
+
+export type ResetMode = "soft" | "mixed" | "hard";
 
 const COUNT_FIELD: Partial<Record<ActionKind, string>> = {
   pull: "commits",
@@ -36,6 +45,7 @@ const COUNT_FIELD: Partial<Record<ActionKind, string>> = {
   revert: "commits",
   merge: "commits",
   rebase: "commits",
+  reset: "commits",
 };
 
 function fill(template: string, vars: Record<string, string | number>): string {
@@ -76,10 +86,14 @@ function resultText(kind: ActionKind, result: CommandResult): string {
     return result.rawStderr?.trim() || "that command didn't succeed.";
   }
   const n = countFor(kind, result);
+  if (kind === "reset" && typeof result.data.mode === "string") {
+    const modeText = entry[result.data.mode as ResetMode];
+    if (modeText) return fillTemplate(modeText, n, result.data);
+  }
   if (result.data.fastForward === true && entry.resultFastForward) {
     return fillTemplate(entry.resultFastForward, n, result.data);
   }
-  const template = n === 0 && entry.resultZero ? entry.resultZero : entry.result;
+  const template = (n === 0 && entry.resultZero ? entry.resultZero : entry.result) ?? "done.";
   return fillTemplate(template, n, result.data);
 }
 
@@ -154,4 +168,19 @@ export function rebasePlanText(commits: number, branch: string, target: string):
 
 export function rebaseProgressText(current: number, total: number): string {
   return fill(dict.rebase.progress ?? "", { current, total });
+}
+
+export function resetModeInlineText(mode: ResetMode): string {
+  const entry = dict.reset;
+  return (mode === "soft" ? entry.modeSoft : mode === "mixed" ? entry.modeMixed : entry.modeHard) ?? "";
+}
+
+export function resetAlreadyPushedWarning(): string {
+  return dict.reset.alreadyPushedWarning ?? "some of these commits are already on your remote. continue?";
+}
+
+export function resetDiscardConfirmText(n: number, hasUncommittedChanges: boolean): string {
+  const s = n === 1 ? "" : "s";
+  const base = fill(dict.reset.confirmDiscard ?? "", { n, s });
+  return hasUncommittedChanges ? `${base} this also throws away the uncommitted changes you have right now.` : base;
 }

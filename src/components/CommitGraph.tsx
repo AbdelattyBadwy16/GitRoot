@@ -9,7 +9,7 @@ interface CommitGraphProps {
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
-  onRevertClick?: (targetHash: string, commitsAfter: number) => void;
+  onCommitAction?: (kind: "reset" | "revert", targetHash: string, commitsAfter: number) => void;
 }
 
 const ROW_HEIGHT = 60;
@@ -89,11 +89,20 @@ export default function CommitGraph({
   hasMore = false,
   loadingMore = false,
   onLoadMore,
-  onRevertClick,
+  onCommitAction,
 }: CommitGraphProps) {
   const [hoveredHash, setHoveredHash] = useState<string | null>(null);
+  const [openMenuHash, setOpenMenuHash] = useState<string | null>(null);
   const reducedMotion = usePrefersReducedMotion();
   const activeHash = hoveredHash ?? pulseHash;
+
+  useEffect(() => {
+    if (!openMenuHash) return;
+    // mousedown, not click - so the click that opens the menu doesn't also close it right away
+    const close = () => setOpenMenuHash(null);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [openMenuHash]);
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -209,7 +218,7 @@ export default function CommitGraph({
     <div>
       <div style={{ marginBottom: 14, display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-          hover a commit to trace its story through the graph — click any earlier one to safely undo back to it
+          hover a commit to trace its story through the graph — click any earlier one for reset or revert options
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
           {hasLocalOnly && (
@@ -392,7 +401,8 @@ export default function CommitGraph({
             const nodeSize = merge ? MERGE_SIZE : NODE_RADIUS * 2;
             const labelX = LANE_X0 + graph.laneCount * LANE_WIDTH + 20;
             const lit = !spotlight || spotlight.has(commit.hash);
-            const revertEligible = !!onRevertClick && !!headHash && commit.hash !== headHash && headAncestors.has(commit.hash);
+            const actionEligible = !!onCommitAction && !!headHash && commit.hash !== headHash && headAncestors.has(commit.hash);
+            const commitsAfter = actionEligible ? headAncestors.size - ancestorsInclusive(commit.hash).size : 0;
 
             return (
               <motion.div
@@ -406,9 +416,8 @@ export default function CommitGraph({
                 onMouseEnter={() => setHoveredHash(commit.hash)}
                 onMouseLeave={() => setHoveredHash((cur) => (cur === commit.hash ? null : cur))}
                 onClick={() => {
-                  if (!revertEligible || !onRevertClick) return;
-                  const commitsAfter = headAncestors.size - ancestorsInclusive(commit.hash).size;
-                  onRevertClick(commit.hash, commitsAfter);
+                  if (!actionEligible) return;
+                  setOpenMenuHash((cur) => (cur === commit.hash ? null : commit.hash));
                 }}
                 style={{
                   position: "absolute",
@@ -416,7 +425,8 @@ export default function CommitGraph({
                   top: y - ROW_HEIGHT / 2,
                   width,
                   height: ROW_HEIGHT,
-                  cursor: revertEligible ? "pointer" : "default",
+                  cursor: actionEligible ? "pointer" : "default",
+                  zIndex: openMenuHash === commit.hash ? 20 : "auto",
                 }}
               >
                 <motion.div
@@ -544,7 +554,7 @@ export default function CommitGraph({
                     <span>{commit.author}</span>
                     <span>·</span>
                     <span>{commit.date}</span>
-                    {revertEligible && hoveredHash === commit.hash && (
+                    {actionEligible && hoveredHash === commit.hash && openMenuHash !== commit.hash && (
                       <motion.span
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
@@ -554,11 +564,79 @@ export default function CommitGraph({
                           fontWeight: 600,
                         }}
                       >
-                        · click to revert to here
+                        · click for reset / revert
                       </motion.span>
                     )}
                   </div>
                 </motion.div>
+
+                {actionEligible && openMenuHash === commit.hash && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -4, scale: 0.97 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.12 }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    style={{
+                      position: "absolute",
+                      left: labelX,
+                      top: ROW_HEIGHT - 4,
+                      width: 260,
+                      zIndex: 30,
+                      borderRadius: 10,
+                      border: "1px solid var(--border)",
+                      background: "var(--surface-1)",
+                      boxShadow: "0 16px 36px rgba(0,0,0,0.4)",
+                      padding: 8,
+                    }}
+                  >
+                    <button
+                      onClick={() => {
+                        setOpenMenuHash(null);
+                        onCommitAction?.("reset", commit.hash, commitsAfter);
+                      }}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        padding: "7px 9px",
+                        borderRadius: 7,
+                        border: "none",
+                        background: "none",
+                        color: "var(--text-primary)",
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      reset to here
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenuHash(null);
+                        onCommitAction?.("revert", commit.hash, commitsAfter);
+                      }}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        padding: "7px 9px",
+                        borderRadius: 7,
+                        border: "none",
+                        background: "none",
+                        color: "var(--text-primary)",
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      revert to here
+                    </button>
+                    <div style={{ marginTop: 4, padding: "4px 9px 2px", fontSize: 10.5, lineHeight: 1.45, color: "var(--text-muted)" }}>
+                      reset rewrites history — only safe for commits still local. revert is always safe, even if pushed, since it adds a new commit instead of erasing anything.
+                    </div>
+                  </motion.div>
+                )}
               </motion.div>
             );
           })}

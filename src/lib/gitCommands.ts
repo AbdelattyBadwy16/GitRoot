@@ -331,6 +331,44 @@ export async function getConflictedFiles(repoPath: string): Promise<string[]> {
   return invoke("conflicted_files", { repoPath });
 }
 
+export async function continueRevert(repoPath: string): Promise<CommandResult> {
+  return normalizeCommandResult(await invoke("continue_revert", { repoPath }));
+}
+
+export async function abortRevert(repoPath: string): Promise<void> {
+  await invoke("abort_revert", { repoPath });
+}
+
+// ===== reset =====
+
+export type ResetMode = "soft" | "mixed" | "hard";
+
+export interface ResetPreflight {
+  currentBranch: string;
+  target: string;
+  commits: number;
+  alreadyPushedCount: number;
+  hasUncommittedChanges: boolean;
+}
+
+function normalizeResetPreflight(raw: any): ResetPreflight {
+  return {
+    currentBranch: raw.current_branch,
+    target: raw.target,
+    commits: raw.commits,
+    alreadyPushedCount: raw.already_pushed_count,
+    hasUncommittedChanges: raw.has_uncommitted_changes,
+  };
+}
+
+export async function resetPreflight(repoPath: string, targetHash: string): Promise<ResetPreflight> {
+  return normalizeResetPreflight(await invoke("reset_preflight", { repoPath, targetHash }));
+}
+
+export async function resetToCommit(repoPath: string, targetHash: string, mode: ResetMode): Promise<CommandResult> {
+  return normalizeCommandResult(await invoke("reset_to_commit", { repoPath, targetHash, mode }));
+}
+
 // backed by a marker file in the app's own data dir, not localStorage - stays correct across
 // app restarts regardless of how the webview handles its storage
 export async function checkTourOffered(): Promise<boolean> {

@@ -5,7 +5,7 @@ import { rebaseProgressText } from "../lib/explain";
 
 interface ConflictDialogProps {
   repoPath: string;
-  kind: "merge" | "rebase";
+  kind: "merge" | "rebase" | "revert";
   target: string;
   onContinue: () => void;
   onAbort: () => void;
@@ -84,14 +84,16 @@ export default function ConflictDialog({ repoPath, kind, target, onContinue, onA
             }}
           />
           <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>
-            {kind === "merge" ? "merge conflict" : "rebase conflict"}
+            {kind === "merge" ? "merge conflict" : kind === "rebase" ? "rebase conflict" : "revert conflict"}
           </h2>
         </div>
 
         <p style={{ margin: "0 0 12px", fontSize: 13.5, color: "var(--text-secondary)", lineHeight: 1.55 }}>
           {kind === "merge"
             ? `git paused while merging ${target} — it couldn't combine these files automatically.`
-            : `git paused while replaying your commits onto ${target} — it couldn't apply one automatically.`}{" "}
+            : kind === "rebase"
+            ? `git paused while replaying your commits onto ${target} — it couldn't apply one automatically.`
+            : `git paused while reverting a commit that touched the same lines as something after it — it couldn't undo it automatically.`}{" "}
           resolve them in your editor or terminal (edit the file, remove the conflict markers, then stage it), and this
           dialog will update on its own.
         </p>

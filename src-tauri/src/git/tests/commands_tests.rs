@@ -1509,3 +1509,115 @@ fn abort_rebase_restores_the_pre_rebase_state() {
         git_status.stdout
     );
 }
+
+// ===== reset =====
+
+#[test]
+fn reset_preflight_reports_zero_already_pushed_when_target_and_head_are_all_local() {
+    let repo = TestRepo::new();
+    let target = repo.git(&["rev-parse", "HEAD"]).stdout.trim().to_string();
+    repo.commit_new_file("a.txt", "1\n", "add a");
+
+    let preflight = reset_preflight_sync(repo.path.clone(), target).unwrap();
+    assert_eq!(preflight.commits, 1);
+    assert_eq!(preflight.already_pushed_count, 0);
+    assert!(!preflight.has_uncommitted_changes);
+}
+
+#[test]
+fn reset_preflight_detects_commits_already_pushed_to_the_remote_tracking_branch() {
+    let repo = TestRepo::new();
+    let target = repo.git(&["rev-parse", "HEAD"]).stdout.trim().to_string();
+    repo.commit_new_file("a.txt", "1\n", "pushed commit");
+    repo.git(&["push", "-q", "origin", "HEAD:main"]);
+    repo.commit_new_file("b.txt", "1\n", "local only commit");
+    repo.write("c.txt", "uncommitted\n");
+
+    let preflight = reset_preflight_sync(repo.path.clone(), target).unwrap();
+    assert_eq!(preflight.commits, 2);
+    assert_eq!(
+        preflight.already_pushed_count, 1,
+        "only the first commit was pushed"
+    );
+    assert!(preflight.has_uncommitted_changes);
+}
+
+#[test]
+fn reset_to_commit_soft_keeps_the_change_staged() {
+    let repo = TestRepo::new();
+    let target = repo.git(&["rev-parse", "HEAD"]).stdout.trim().to_string();
+    repo.commit_new_file("a.txt", "1\n", "add a");
+
+    let result =
+        reset_to_commit_sync(repo.path.clone(), target.clone(), "soft".to_string()).unwrap();
+    assert!(result.success, "stderr: {:?}", result.raw_stderr);
+    assert_eq!(result.data["commits"], 1);
+    assert_eq!(repo.git(&["rev-parse", "HEAD"]).stdout.trim(), target);
+    let status = repo.git(&["status", "--porcelain"]);
+    assert!(
+        status.stdout.contains("A  a.txt"),
+        "change should stay staged: {}",
+        status.stdout
+    );
+}
+
+#[test]
+fn reset_to_commit_mixed_keeps_the_change_but_unstaged() {
+    let repo = TestRepo::new();
+    let target = repo.git(&["rev-parse", "HEAD"]).stdout.trim().to_string();
+    repo.commit_new_file("a.txt", "1\n", "add a");
+
+    let result =
+        reset_to_commit_sync(repo.path.clone(), target.clone(), "mixed".to_string()).unwrap();
+    assert!(result.success, "stderr: {:?}", result.raw_stderr);
+    assert_eq!(repo.git(&["rev-parse", "HEAD"]).stdout.trim(), target);
+    let status = repo.git(&["status", "--porcelain"]);
+    assert!(
+        status.stdout.contains("?? a.txt"),
+        "change should be unstaged: {}",
+        status.stdout
+    );
+}
+
+#[test]
+fn reset_to_commit_hard_discards_the_change_entirely() {
+    let repo = TestRepo::new();
+    let target = repo.git(&["rev-parse", "HEAD"]).stdout.trim().to_string();
+    repo.commit_new_file("a.txt", "1\n", "add a");
+
+    let result =
+        reset_to_commit_sync(repo.path.clone(), target.clone(), "hard".to_string()).unwrap();
+    assert!(result.success, "stderr: {:?}", result.raw_stderr);
+    assert_eq!(repo.git(&["rev-parse", "HEAD"]).stdout.trim(), target);
+    assert!(!repo.dir.join("repo").join("a.txt").exists());
+    let status = repo.git(&["status", "--porcelain"]);
+    assert!(
+        status.stdout.is_empty(),
+        "hard reset should leave a clean tree: {}",
+        status.stdout
+    );
+}
+
+#[test]
+fn reset_to_commit_rejects_an_unknown_mode() {
+    let repo = TestRepo::new();
+    let target = repo.git(&["rev-parse", "HEAD"]).stdout.trim().to_string();
+    let result = reset_to_commit_sync(repo.path.clone(), target, "banana".to_string()).unwrap();
+    assert!(!result.success);
+}
+
+// note: git revert of a full target..HEAD range is always a byte-exact undo of a clean linear
+// history, so it can't actually conflict on its own - continue/abort just need to behave sanely
+// when there is nothing in progress, which is what they will see in real use most of the time
+#[test]
+fn continue_revert_fails_cleanly_when_nothing_is_in_progress() {
+    let repo = TestRepo::new();
+    let result = continue_revert_sync(repo.path.clone()).unwrap();
+    assert!(!result.success);
+}
+
+#[test]
+fn abort_revert_fails_cleanly_when_nothing_is_in_progress() {
+    let repo = TestRepo::new();
+    assert!(abort_revert_sync(&repo.path).is_err());
+}
