@@ -43,7 +43,21 @@
     "meaning": "undoes commits by adding a new commit that reverses them — nothing is deleted from history.",
     "result": "reverted {n} commit{s} back to {target}.",
     "steps": ["found the {n} commit{s} after {target}", "created new commit{s} that undo exactly their changes", "nothing was deleted — {target} and everything after it still exist in history"],
-    "confirmText": "this adds new commit{s} that undo the {n} commit{s} after {target} — none of them are deleted, and this is safe even if they've been pushed. continue?"
+    "confirmText": "this adds new commit{s} that undo the {n} commit{s} after {target} — none of them are deleted, and this is safe even if they've been pushed. continue?",
+    "conflictPaused": "git paused the revert here — {files} conflict. resolve them in your editor or terminal, then come back and continue.",
+    "risky": false
+  },
+  "reset": {
+    "meaning": "moves {branch} back to {target}. what happens to the commits' changes depends on the mode you pick.",
+    "soft": "moved {branch} back to {target} — your changes from the {n} commit{s} stay staged, ready to commit again.",
+    "mixed": "moved {branch} back to {target} — your changes from the {n} commit{s} stay, but unstaged.",
+    "hard": "moved {branch} back to {target} and discarded the {n} commit{s} and their changes.",
+    "modeSoft": "keeps the changes from the commits you're moving past — staged, ready to commit again.",
+    "modeMixed": "keeps the changes from the commits you're moving past — but unstaged, like you never committed them.",
+    "modeHard": "throws away the changes from the commits you're moving past. this can't be undone through the app.",
+    "alreadyPushedWarning": "some of these commits are already on your remote. resetting past them will diverge your branch from the shared history. continue?",
+    "confirmDiscard": "this will permanently discard {n} commit{s} and their changes. continue?",
+    "risky": true
   },
   "undo": {
     "meaning": "reverses your last action so things are back to how they were.",

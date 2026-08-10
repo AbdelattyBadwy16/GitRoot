@@ -1,8 +1,9 @@
+import type { ReactNode } from "react";
 import { motion } from "framer-motion";
 
 interface ConfirmDialogProps {
   title: string;
-  message: string;
+  message: ReactNode;
   confirmLabel: string;
   onConfirm: () => void;
   onCancel: () => void;
@@ -53,7 +54,7 @@ export default function ConfirmDialog({ title, message, confirmLabel, onConfirm,
           />
           <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>{title}</h2>
         </div>
-        <p style={{ margin: "0 0 20px", fontSize: 13.5, color: "var(--text-secondary)", lineHeight: 1.55 }}>{message}</p>
+        <div style={{ margin: "0 0 20px", fontSize: 13.5, color: "var(--text-secondary)", lineHeight: 1.55 }}>{message}</div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button
             onClick={onCancel}

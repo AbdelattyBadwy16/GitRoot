@@ -2,6 +2,10 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import type { BranchInfo } from "../lib/gitCommands";
 
+// each branch row is 10px top/bottom padding plus its content, this is the real rendered height
+const BRANCH_ROW_HEIGHT = 41;
+const MAX_VISIBLE_BRANCHES = 5;
+
 interface BranchesTabProps {
   branches: BranchInfo[];
   onSwitch: (name: string) => void;
@@ -48,58 +52,60 @@ export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPick
       </p>
 
       <div style={{ marginBottom: 20, borderRadius: 10, border: "1px solid var(--border)", overflow: "hidden" }}>
-        {branches.map((b, i) => (
-          <button
-            key={b.name}
-            onClick={() => !b.isCurrent && onSwitch(b.name)}
-            disabled={busy || b.isCurrent}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              width: "100%",
-              textAlign: "left",
-              padding: "10px 14px",
-              border: "none",
-              borderTop: i === 0 ? "none" : "1px solid var(--border)",
-              background: b.isCurrent ? "color-mix(in srgb, var(--lane-1) 10%, var(--surface-1))" : "var(--surface-0)",
-              cursor: busy || b.isCurrent ? "default" : "pointer",
-              opacity: busy && !b.isCurrent ? 0.5 : 1,
-            }}
-          >
-            <span
+        <div style={{ maxHeight: BRANCH_ROW_HEIGHT * MAX_VISIBLE_BRANCHES, overflowY: "auto" }}>
+          {branches.map((b, i) => (
+            <button
+              key={b.name}
+              onClick={() => !b.isCurrent && onSwitch(b.name)}
+              disabled={busy || b.isCurrent}
               style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: b.isCurrent ? "var(--lane-1)" : "var(--text-muted)",
-                boxShadow: b.isCurrent ? "0 0 6px 1px color-mix(in srgb, var(--lane-1) 55%, transparent)" : "none",
-                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                width: "100%",
+                textAlign: "left",
+                padding: "10px 14px",
+                border: "none",
+                borderTop: i === 0 ? "none" : "1px solid var(--border)",
+                background: b.isCurrent ? "color-mix(in srgb, var(--lane-1) 10%, var(--surface-1))" : "var(--surface-0)",
+                cursor: busy || b.isCurrent ? "default" : "pointer",
+                opacity: busy && !b.isCurrent ? 0.5 : 1,
               }}
-            />
-            <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 13.5, fontWeight: b.isCurrent ? 600 : 500, color: "var(--text-primary)" }}>
-              {b.name}
-            </span>
-            {b.isCurrent && (
+            >
               <span
                 style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  color: "var(--lane-1)",
-                  background: "color-mix(in srgb, var(--lane-1) 16%, var(--surface-1))",
-                  border: "1px solid color-mix(in srgb, var(--lane-1) 40%, transparent)",
-                  borderRadius: 999,
-                  padding: "1px 7px",
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: b.isCurrent ? "var(--lane-1)" : "var(--text-muted)",
+                  boxShadow: b.isCurrent ? "0 0 6px 1px color-mix(in srgb, var(--lane-1) 55%, transparent)" : "none",
+                  flexShrink: 0,
                 }}
-              >
-                current
+              />
+              <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 13.5, fontWeight: b.isCurrent ? 600 : 500, color: "var(--text-primary)" }}>
+                {b.name}
               </span>
-            )}
-            {b.upstream && (
-              <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: "auto" }}>tracks {b.upstream}</span>
-            )}
-          </button>
-        ))}
+              {b.isCurrent && (
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    color: "var(--lane-1)",
+                    background: "color-mix(in srgb, var(--lane-1) 16%, var(--surface-1))",
+                    border: "1px solid color-mix(in srgb, var(--lane-1) 40%, transparent)",
+                    borderRadius: 999,
+                    padding: "1px 7px",
+                  }}
+                >
+                  current
+                </span>
+              )}
+              {b.upstream && (
+                <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: "auto" }}>tracks {b.upstream}</span>
+              )}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div style={{ borderRadius: 10, border: "1px solid var(--border)", padding: 14, background: "var(--surface-1)" }}>

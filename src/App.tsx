@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import CommitGraph from "./components/CommitGraph";
+import CommitGraph, { type CommitActionContext } from "./components/CommitGraph";
+import CommitRangeSummary from "./components/CommitRangeSummary";
 import StagingList from "./components/StagingList";
 import CommandBar from "./components/CommandBar";
 import DetailsPanel from "./components/DetailsPanel";
@@ -8,6 +9,7 @@ import BranchesTab from "./components/BranchesTab";
 import HunkEditor from "./components/HunkEditor";
 import ConfirmDialog from "./components/ConfirmDialog";
 import ConflictDialog from "./components/ConflictDialog";
+import ResetDialog from "./components/ResetDialog";
 import GitIdentityPrompt from "./components/GitIdentityPrompt";
 import AccountSwitcher from "./components/AccountSwitcher";
 import TourOverlay from "./components/TourOverlay";
@@ -36,6 +38,10 @@ import {
   createBranch,
   undoCreateBranch,
   revertToCommit,
+  continueRevert,
+  abortRevert,
+  resetPreflight,
+  resetToCommit,
   pickFolder,
   checkGitAvailable,
   checkGitIdentity,
@@ -59,6 +65,8 @@ import {
   type GitIdentity,
   type MergePreview,
   type RebasePreflight,
+  type ResetPreflight,
+  type ResetMode,
 } from "./lib/gitCommands";
 import {
   explainDetails,
@@ -85,7 +93,8 @@ type UndoAction =
   | { kind: "commit"; targetHash: string }
   | { kind: "switchBranch"; targetBranch: string }
   | { kind: "createBranch"; name: string; startPoint: string }
-  | { kind: "revert"; targetHash: string };
+  | { kind: "revert"; targetHash: string }
+  | { kind: "reset"; targetHash: string };
 
 const UNDO_LABEL: Record<UndoAction["kind"], string> = {
   pull: "undo pull",
@@ -95,6 +104,7 @@ const UNDO_LABEL: Record<UndoAction["kind"], string> = {
   switchBranch: "undo switch",
   createBranch: "undo new branch",
   revert: "undo revert",
+  reset: "undo reset",
 };
 
 function undoConfirmText(action: UndoAction): string {
@@ -113,6 +123,8 @@ function undoConfirmText(action: UndoAction): string {
       return `deletes ${action.name} and switches back to ${action.startPoint}. only works if you haven't committed anything on it yet.`;
     case "revert":
       return "undoes the revert and keeps the changes staged, ready to commit again.";
+    case "reset":
+      return "moves your branch back to before the reset. changes a hard reset threw away can't be brought back.";
   }
 }
 
@@ -135,6 +147,8 @@ function computeUndo(kind: ActionKind, result: CommandResult): UndoAction | null
       return typeof data.branch === "string" && typeof data.from === "string" ? { kind: "createBranch", name: data.branch, startPoint: data.from } : null;
     case "revert":
       return typeof data.before === "string" ? { kind: "revert", targetHash: data.before } : null;
+    case "reset":
+      return typeof data.before === "string" ? { kind: "reset", targetHash: data.before } : null;
     default:
       return null;
   }
@@ -164,7 +178,7 @@ export default function App() {
   const [lastAction, setLastAction] = useState<ActionDetails | null>(null);
   const [learningMode, setLearningMode] = useState(loadLearningMode);
   const [branches, setBranches] = useState<BranchInfo[]>([]);
-  const [revertTarget, setRevertTarget] = useState<{ hash: string; commitsAfter: number } | null>(null);
+  const [revertTarget, setRevertTarget] = useState<CommitActionContext | null>(null);
   const [hunkEditorFile, setHunkEditorFile] = useState<string | null>(null);
   const [lastUndo, setLastUndo] = useState<UndoAction | null>(null);
   const [undoConfirming, setUndoConfirming] = useState(false);
@@ -180,7 +194,13 @@ export default function App() {
   const [mergeConfirm, setMergeConfirm] = useState<{ target: string; preview: MergePreview } | null>(null);
   const [rebaseFlow, setRebaseFlow] = useState<{ step: "warning" | "plan"; target: string; preflight: RebasePreflight } | null>(null);
   const [rebaseProgress, setRebaseProgress] = useState<{ current: number; total: number } | null>(null);
-  const [pausedOp, setPausedOp] = useState<{ kind: "merge" | "rebase"; target: string } | null>(null);
+  const [pausedOp, setPausedOp] = useState<{ kind: "merge" | "rebase" | "revert"; target: string } | null>(null);
+  const [resetFlow, setResetFlow] = useState<{
+    context: CommitActionContext;
+    preflight: ResetPreflight;
+    step: "warning" | "picker" | "confirmDiscard";
+    mode: ResetMode;
+  } | null>(null);
 
   useEffect(() => {
     checkGitAvailable()
@@ -301,6 +321,7 @@ export default function App() {
     setRebaseFlow(null);
     setRebaseProgress(null);
     setPausedOp(null);
+    setResetFlow(null);
     await refresh(info.path, GRAPH_PAGE_SIZE);
     checkGitIdentity(info.path)
       .then(setGitIdentity)
@@ -528,7 +549,12 @@ export default function App() {
     if (!repo || !pausedOp) return;
     setBusy("conflictContinue");
     try {
-      const raw = pausedOp.kind === "merge" ? await continueMerge(repo.path) : await continueRebase(repo.path);
+      const raw =
+        pausedOp.kind === "merge"
+          ? await continueMerge(repo.path)
+          : pausedOp.kind === "rebase"
+          ? await continueRebase(repo.path)
+          : await continueRevert(repo.path);
       const result = withTarget(raw, pausedOp.target);
       if (result.conflict) {
         setLastAction(explainDetails(pausedOp.kind, result));
@@ -536,6 +562,7 @@ export default function App() {
       }
       setPausedOp(null);
       const details = applyResult(pausedOp.kind, result);
+      if (!details.isError && pausedOp.kind === "revert") setLastUndo(computeUndo("revert", result));
       const g = await refresh(repo.path);
       if (!details.isError) pulseHead(g);
     } finally {
@@ -548,7 +575,8 @@ export default function App() {
     setBusy("conflictAbort");
     try {
       if (pausedOp.kind === "merge") await abortMerge(repo.path);
-      else await abortRebase(repo.path);
+      else if (pausedOp.kind === "rebase") await abortRebase(repo.path);
+      else await abortRevert(repo.path);
       setPausedOp(null);
       setLastAction(null);
       await refresh(repo.path);
@@ -559,13 +587,67 @@ export default function App() {
 
   async function confirmRevert() {
     if (!repo || !revertTarget) return;
-    const target = revertTarget.hash;
+    const target = revertTarget.target.hash;
+    setRevertTarget(null);
     setBusy("revert");
     try {
       const result = await revertToCommit(repo.path, target);
+      if (result.conflict) {
+        setPausedOp({ kind: "revert", target });
+        setLastAction(explainDetails("revert", result));
+        await refresh(repo.path);
+        return;
+      }
       const details = applyResult("revert", result);
       if (!details.isError) setLastUndo(computeUndo("revert", result));
-      setRevertTarget(null);
+      const g = await refresh(repo.path);
+      if (!details.isError) pulseHead(g);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handlePickCommitAction(kind: "reset" | "revert", context: CommitActionContext) {
+    if (!repo) return;
+    if (kind === "revert") {
+      setRevertTarget(context);
+      return;
+    }
+    const preflight = await resetPreflight(repo.path, context.target.hash);
+    setResetFlow({
+      context,
+      preflight,
+      step: preflight.alreadyPushedCount > 0 ? "warning" : "picker",
+      mode: "mixed",
+    });
+  }
+
+  function confirmResetWarning() {
+    setResetFlow((rf) => (rf ? { ...rf, step: "picker" } : rf));
+  }
+
+  function confirmResetPicker() {
+    if (!resetFlow) return;
+    if (resetFlow.mode === "hard") {
+      setResetFlow({ ...resetFlow, step: "confirmDiscard" });
+      return;
+    }
+    executeReset(resetFlow.mode);
+  }
+
+  function confirmResetDiscard() {
+    executeReset("hard");
+  }
+
+  async function executeReset(mode: ResetMode) {
+    if (!repo || !resetFlow) return;
+    const target = resetFlow.context.target.hash;
+    setBusy("reset");
+    try {
+      const result = await resetToCommit(repo.path, target, mode);
+      const details = applyResult("reset", result);
+      if (!details.isError) setLastUndo(computeUndo("reset", result));
+      setResetFlow(null);
       const g = await refresh(repo.path);
       if (!details.isError) pulseHead(g);
     } finally {
@@ -581,6 +663,7 @@ export default function App() {
       let result: CommandResult;
       switch (action.kind) {
         case "pull":
+        case "reset":
           result = await hardResetTo(repo.path, action.targetHash);
           break;
         case "commit":
@@ -825,7 +908,7 @@ export default function App() {
                   hasMore={graph.hasMore}
                   loadingMore={loadingMoreGraph}
                   onLoadMore={loadMoreGraph}
-                  onRevertClick={(hash, commitsAfter) => setRevertTarget({ hash, commitsAfter })}
+                  onCommitAction={handlePickCommitAction}
                 />
               </div>
             )}
@@ -845,8 +928,17 @@ export default function App() {
         {revertTarget && (
           <ConfirmDialog
             title="revert to this commit?"
-            message={revertConfirmText(revertTarget.commitsAfter, revertTarget.hash.slice(0, 7))}
-            confirmLabel={`revert ${revertTarget.commitsAfter} commit${revertTarget.commitsAfter === 1 ? "" : "s"}`}
+            message={
+              <>
+                <CommitRangeSummary
+                  context={revertTarget}
+                  afterCaption="content will match"
+                  listCaption="commits this will undo with new commits, newest first:"
+                />
+                {revertConfirmText(revertTarget.commits, revertTarget.target.hash.slice(0, 7))}
+              </>
+            }
+            confirmLabel={`revert ${revertTarget.commits} commit${revertTarget.commits === 1 ? "" : "s"}`}
             onConfirm={confirmRevert}
             onCancel={() => setRevertTarget(null)}
             busy={busy === "revert"}
@@ -910,6 +1002,23 @@ export default function App() {
             onConfirm={confirmRebasePlan}
             onCancel={() => setRebaseFlow(null)}
             busy={busy === "rebase"}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {resetFlow && (
+          <ResetDialog
+            context={resetFlow.context}
+            hasUncommittedChanges={resetFlow.preflight.hasUncommittedChanges}
+            step={resetFlow.step}
+            mode={resetFlow.mode}
+            onModeChange={(mode) => setResetFlow((rf) => (rf ? { ...rf, mode } : rf))}
+            onConfirmWarning={confirmResetWarning}
+            onConfirmPicker={confirmResetPicker}
+            onConfirmDiscard={confirmResetDiscard}
+            onCancel={() => setResetFlow(null)}
+            busy={busy === "reset"}
           />
         )}
       </AnimatePresence>

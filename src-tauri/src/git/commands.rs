@@ -302,6 +302,105 @@ fn hard_reset_to_sync(repo_path: String, target_hash: String) -> Result<CommandR
     ))
 }
 
+#[derive(Debug, Serialize)]
+pub struct ResetPreflight {
+    pub current_branch: String,
+    pub target: String,
+    pub commits: u32,
+    pub already_pushed_count: u32,
+    pub has_uncommitted_changes: bool,
+}
+
+#[tauri::command]
+pub async fn reset_preflight(
+    repo_path: String,
+    target_hash: String,
+) -> Result<ResetPreflight, String> {
+    tauri::async_runtime::spawn_blocking(move || reset_preflight_sync(repo_path, target_hash))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn reset_preflight_sync(repo_path: String, target_hash: String) -> Result<ResetPreflight, String> {
+    let current_branch = super::current_branch_name(&repo_path)?;
+    let range = format!("{target_hash}..HEAD");
+    let commits = rev_list_count(&repo_path, &range)?;
+
+    let upstream = upstream_ref(&repo_path);
+    let already_pushed_count = match &upstream {
+        Some(u) => {
+            let not_pushed = run_git(&repo_path, &["rev-list", "--count", &range, "--not", u])?
+                .stdout
+                .trim()
+                .parse::<u32>()
+                .unwrap_or(0);
+            commits.saturating_sub(not_pushed)
+        }
+        None => 0,
+    };
+
+    let status = run_git(&repo_path, &["status", "--porcelain"])?;
+    let has_uncommitted_changes = !status.stdout.trim().is_empty();
+
+    Ok(ResetPreflight {
+        current_branch,
+        target: target_hash,
+        commits,
+        already_pushed_count,
+        has_uncommitted_changes,
+    })
+}
+
+#[tauri::command]
+pub async fn reset_to_commit(
+    repo_path: String,
+    target_hash: String,
+    mode: String,
+) -> Result<CommandResult, String> {
+    tauri::async_runtime::spawn_blocking(move || reset_to_commit_sync(repo_path, target_hash, mode))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn reset_to_commit_sync(
+    repo_path: String,
+    target_hash: String,
+    mode: String,
+) -> Result<CommandResult, String> {
+    let flag = match mode.as_str() {
+        "soft" => "--soft",
+        "mixed" => "--mixed",
+        "hard" => "--hard",
+        _ => {
+            return Ok(CommandResult::failure(
+                "git reset",
+                "unknown reset mode".to_string(),
+            ))
+        }
+    };
+    let command = display_command(&["reset", flag, &target_hash]);
+    let current_branch = super::current_branch_name(&repo_path).unwrap_or_default();
+    let commits = rev_list_count(&repo_path, &format!("{target_hash}..HEAD"))?;
+    let old_head = run_git(&repo_path, &["rev-parse", "HEAD"])?.stdout;
+
+    let result = run_git(&repo_path, &["reset", flag, &target_hash])?;
+    if !result.success {
+        return Ok(CommandResult::failure(&command, result.stderr));
+    }
+
+    Ok(CommandResult::ok(
+        &command,
+        json!({
+            "commits": commits,
+            "branch": current_branch,
+            "target": target_hash,
+            "mode": mode,
+            "before": short_hash(&old_head),
+            "after": short_hash(&target_hash),
+        }),
+    ))
+}
+
 #[tauri::command]
 pub async fn stash(repo_path: String) -> Result<CommandResult, String> {
     tauri::async_runtime::spawn_blocking(move || stash_sync(repo_path))
@@ -756,6 +855,7 @@ pub async fn revert_to_commit(repo_path: String, target: String) -> Result<Comma
 fn revert_to_commit_sync(repo_path: String, target: String) -> Result<CommandResult, String> {
     let range = format!("{target}..HEAD");
     let command = display_command(&["revert", "--no-edit", &range]);
+    let current_branch = super::current_branch_name(&repo_path).unwrap_or_default();
 
     let is_ancestor = run_git(
         &repo_path,
@@ -783,12 +883,25 @@ fn revert_to_commit_sync(repo_path: String, target: String) -> Result<CommandRes
 
     let before_head = run_git(&repo_path, &["rev-parse", "HEAD"])?.stdout;
 
-    let result = run_git(&repo_path, &["revert", "--no-edit", &range])?;
+    let result = run_git(
+        &repo_path,
+        &["-c", "core.editor=true", "revert", "--no-edit", &range],
+    )?;
     if !result.success {
-        // we don't have a conflict UI for revert, so undo it and let the user do it in terminal
+        let unmerged = conflicted_files_sync(&repo_path)?;
+        if !unmerged.is_empty() {
+            return Ok(CommandResult::conflict_with_target(
+                &command,
+                &current_branch,
+                &target,
+                unmerged,
+            ));
+        }
+        // git refused before it even started a conflict (for example uncommitted changes in the
+        // way) - nothing to resolve, so clean up and just fail normally
         let _ = run_git(&repo_path, &["revert", "--abort"]);
         let message = format!(
-            "{}\n\ngitroot backed this out automatically (git revert --abort) — your repo is unchanged. this app can't resolve conflicts yet; use your terminal if you want to do this revert.",
+            "{}\n\ngitroot backed this out automatically (git revert --abort) — your repo is unchanged.",
             result.stderr.trim()
         );
         return Ok(CommandResult::failure(&command, message));
@@ -805,6 +918,55 @@ fn revert_to_commit_sync(repo_path: String, target: String) -> Result<CommandRes
             "after": short_hash(&after_head),
         }),
     ))
+}
+
+#[tauri::command]
+pub async fn continue_revert(repo_path: String) -> Result<CommandResult, String> {
+    tauri::async_runtime::spawn_blocking(move || continue_revert_sync(repo_path))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn continue_revert_sync(repo_path: String) -> Result<CommandResult, String> {
+    let command = display_command(&["revert", "--continue"]);
+    let current_branch = super::current_branch_name(&repo_path).unwrap_or_default();
+    let unmerged = conflicted_files_sync(&repo_path)?;
+    if !unmerged.is_empty() {
+        return Ok(CommandResult::conflict(&command, &current_branch, unmerged));
+    }
+
+    let result = run_git(
+        &repo_path,
+        &["-c", "core.editor=true", "revert", "--continue"],
+    )?;
+    if !result.success {
+        let unmerged = conflicted_files_sync(&repo_path)?;
+        if !unmerged.is_empty() {
+            return Ok(CommandResult::conflict(&command, &current_branch, unmerged));
+        }
+        return Ok(CommandResult::failure(&command, result.stderr));
+    }
+
+    let after_head = run_git(&repo_path, &["rev-parse", "HEAD"])?.stdout;
+    Ok(CommandResult::ok(
+        &command,
+        json!({ "branch": current_branch, "after": short_hash(&after_head) }),
+    ))
+}
+
+#[tauri::command]
+pub async fn abort_revert(repo_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || abort_revert_sync(&repo_path))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn abort_revert_sync(repo_path: &str) -> Result<(), String> {
+    let out = run_git(repo_path, &["revert", "--abort"])?;
+    if !out.success {
+        return Err(out.stderr);
+    }
+    Ok(())
 }
 
 fn split_into_hunks(diff: &str) -> (String, Vec<String>) {
