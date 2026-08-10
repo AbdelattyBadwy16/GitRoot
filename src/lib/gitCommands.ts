@@ -330,3 +330,13 @@ export async function abortRebase(repoPath: string): Promise<void> {
 export async function getConflictedFiles(repoPath: string): Promise<string[]> {
   return invoke("conflicted_files", { repoPath });
 }
+
+// backed by a marker file in the app's own data dir, not localStorage - stays correct across
+// app restarts regardless of how the webview handles its storage
+export async function checkTourOffered(): Promise<boolean> {
+  return invoke("check_tour_offered");
+}
+
+export async function markTourOffered(): Promise<void> {
+  await invoke("mark_tour_offered");
+}

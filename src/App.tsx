@@ -39,6 +39,8 @@ import {
   pickFolder,
   checkGitAvailable,
   checkGitIdentity,
+  checkTourOffered,
+  markTourOffered,
   openExternal,
   mergePreview,
   mergeBranch,
@@ -143,7 +145,6 @@ function withTarget(result: CommandResult, target: string): CommandResult {
 }
 
 const LEARNING_MODE_KEY = "gitroot:learningMode";
-const TOUR_OFFERED_KEY = "gitroot:tourOffered";
 
 function loadLearningMode(): boolean {
   const stored = localStorage.getItem(LEARNING_MODE_KEY);
@@ -171,6 +172,10 @@ export default function App() {
   const [gitIdentity, setGitIdentity] = useState<GitIdentity | null>(null);
   const [showTourPrompt, setShowTourPrompt] = useState(false);
   const [tourStep, setTourStep] = useState<number | null>(null);
+  // while true, elements that are normally hidden until something makes them relevant (undo,
+  // merge/rebase pickers with only one branch) force-show a preview instead, so the tour always
+  // has something real to point at
+  const touring = tourStep !== null;
 
   const [mergeConfirm, setMergeConfirm] = useState<{ target: string; preview: MergePreview } | null>(null);
   const [rebaseFlow, setRebaseFlow] = useState<{ step: "warning" | "plan"; target: string; preflight: RebasePreflight } | null>(null);
@@ -181,6 +186,10 @@ export default function App() {
     checkGitAvailable()
       .then((info) => setGitAvailable(info.available))
       .catch(() => setGitAvailable(false));
+    // the tour-offered flag moved from localStorage to a file on disk (see checkTourOffered) -
+    // clean up both old keys, they're unused now
+    localStorage.removeItem("gitroot:tourOffered");
+    localStorage.removeItem("gitroot:tourOffered:v2");
   }, []);
 
   useEffect(() => {
@@ -296,8 +305,8 @@ export default function App() {
     checkGitIdentity(info.path)
       .then(setGitIdentity)
       .catch(() => setGitIdentity(null));
-    if (localStorage.getItem(TOUR_OFFERED_KEY) === null) {
-      localStorage.setItem(TOUR_OFFERED_KEY, "true");
+    if (!(await checkTourOffered())) {
+      await markTourOffered();
       setShowTourPrompt(true);
     }
   }
@@ -690,14 +699,16 @@ export default function App() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <AnimatePresence>
-            {lastUndo && (
+            {(lastUndo || touring) && (
               <motion.button
                 key="undo"
+                data-tour="undo-button"
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.9 }}
-                onClick={() => setUndoConfirming(true)}
-                disabled={!!busy}
+                onClick={() => lastUndo && setUndoConfirming(true)}
+                disabled={!!busy || !lastUndo}
+                title={lastUndo ? undefined : "appears here after an action that can be safely undone"}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -709,11 +720,12 @@ export default function App() {
                   color: "var(--lane-4)",
                   fontSize: 12.5,
                   fontWeight: 600,
-                  cursor: busy ? "default" : "pointer",
+                  cursor: busy || !lastUndo ? "default" : "pointer",
+                  opacity: lastUndo ? 1 : 0.55,
                 }}
               >
                 <UndoIcon />
-                {UNDO_LABEL[lastUndo.kind]}
+                {lastUndo ? UNDO_LABEL[lastUndo.kind] : "undo last action"}
               </motion.button>
             )}
           </AnimatePresence>
@@ -749,7 +761,9 @@ export default function App() {
           >
             switch repo
           </button>
-          <AccountSwitcher repoPath={repo.path} identity={gitIdentity ?? { name: null, email: null }} onIdentityChanged={refreshGitIdentity} />
+          <div data-tour="account-switcher">
+            <AccountSwitcher repoPath={repo.path} identity={gitIdentity ?? { name: null, email: null }} onIdentityChanged={refreshGitIdentity} />
+          </div>
         </div>
       </header>
 
@@ -801,6 +815,7 @@ export default function App() {
                 onPickRebaseTarget={handlePickRebaseTarget}
                 mergeBusy={!!busy}
                 rebaseBusy={!!busy}
+                touring={touring}
               />
             ) : (
               <div data-tour="graph" style={{ padding: 20 }}>

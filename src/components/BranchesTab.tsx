@@ -11,9 +11,12 @@ interface BranchesTabProps {
   onPickRebaseTarget: (branch: string) => void;
   mergeBusy: boolean;
   rebaseBusy: boolean;
+  // while true, show the merge/rebase pickers even with only one branch, disabled, so the tour
+  // always has something real to point at
+  touring?: boolean;
 }
 
-export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPickMergeTarget, onPickRebaseTarget, mergeBusy, rebaseBusy }: BranchesTabProps) {
+export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPickMergeTarget, onPickRebaseTarget, mergeBusy, rebaseBusy, touring }: BranchesTabProps) {
   const current = branches.find((b) => b.isCurrent)?.name ?? branches[0]?.name ?? "";
   const [newName, setNewName] = useState("");
   const [startPoint, setStartPoint] = useState(current);
@@ -168,9 +171,9 @@ export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPick
         </motion.button>
       </div>
 
-      {otherBranches.length > 0 && (
+      {(otherBranches.length > 0 || touring) && (
         <div style={{ display: "flex", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
-          <div style={{ flex: "1 1 220px", borderRadius: 10, border: "1px solid var(--border)", padding: 14, background: "var(--surface-1)" }}>
+          <div data-tour="merge-picker" style={{ flex: "1 1 220px", borderRadius: 10, border: "1px solid var(--border)", padding: 14, background: "var(--surface-1)" }}>
             <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 4 }}>merge into {current}</div>
             <p style={{ margin: "0 0 10px", fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.4 }}>
               combines another branch's history into {current}.
@@ -179,7 +182,7 @@ export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPick
               <select
                 value={effectiveMergeTarget}
                 onChange={(e) => setMergeTarget(e.target.value)}
-                disabled={mergeBusy}
+                disabled={mergeBusy || otherBranches.length === 0}
                 style={{
                   flex: 1,
                   padding: "8px 10px",
@@ -191,11 +194,15 @@ export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPick
                   fontFamily: "ui-monospace, monospace",
                 }}
               >
-                {otherBranches.map((b) => (
-                  <option key={b.name} value={b.name}>
-                    {b.name}
-                  </option>
-                ))}
+                {otherBranches.length === 0 ? (
+                  <option>no other branches yet</option>
+                ) : (
+                  otherBranches.map((b) => (
+                    <option key={b.name} value={b.name}>
+                      {b.name}
+                    </option>
+                  ))
+                )}
               </select>
               <button
                 onClick={() => effectiveMergeTarget && onPickMergeTarget(effectiveMergeTarget)}
@@ -218,7 +225,7 @@ export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPick
             </div>
           </div>
 
-          <div style={{ flex: "1 1 220px", borderRadius: 10, border: "1px solid var(--border)", padding: 14, background: "var(--surface-1)" }}>
+          <div data-tour="rebase-picker" style={{ flex: "1 1 220px", borderRadius: 10, border: "1px solid var(--border)", padding: 14, background: "var(--surface-1)" }}>
             <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 4 }}>rebase {current} onto</div>
             <p style={{ margin: "0 0 10px", fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.4 }}>
               replays {current}'s own commits on top of another branch, one at a time.
@@ -227,7 +234,7 @@ export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPick
               <select
                 value={effectiveRebaseTarget}
                 onChange={(e) => setRebaseTarget(e.target.value)}
-                disabled={rebaseBusy}
+                disabled={rebaseBusy || otherBranches.length === 0}
                 style={{
                   flex: 1,
                   padding: "8px 10px",
@@ -239,11 +246,15 @@ export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPick
                   fontFamily: "ui-monospace, monospace",
                 }}
               >
-                {otherBranches.map((b) => (
-                  <option key={b.name} value={b.name}>
-                    {b.name}
-                  </option>
-                ))}
+                {otherBranches.length === 0 ? (
+                  <option>no other branches yet</option>
+                ) : (
+                  otherBranches.map((b) => (
+                    <option key={b.name} value={b.name}>
+                      {b.name}
+                    </option>
+                  ))
+                )}
               </select>
               <button
                 onClick={() => effectiveRebaseTarget && onPickRebaseTarget(effectiveRebaseTarget)}

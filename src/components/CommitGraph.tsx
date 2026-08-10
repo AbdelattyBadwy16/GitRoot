@@ -18,6 +18,7 @@ const LANE_X0 = 24;
 const NODE_RADIUS = 7.5;
 const MERGE_SIZE = 15;
 const TOP_PADDING = 30;
+const MAX_VISIBLE_TIPS = 6;
 
 const LANE_COLORS = [
   "var(--lane-1)",
@@ -242,7 +243,7 @@ export default function CommitGraph({
           )}
           {branchTips.length > 0 && (
             <span style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-              {branchTips.map(([label, { color, head }]) => (
+              {branchTips.slice(0, MAX_VISIBLE_TIPS).map(([label, { color, head }]) => (
                 <span
                   key={label}
                   style={{
@@ -262,6 +263,25 @@ export default function CommitGraph({
                   {label}
                 </span>
               ))}
+              {branchTips.length > MAX_VISIBLE_TIPS && (
+                <span
+                  title={branchTips
+                    .slice(MAX_VISIBLE_TIPS)
+                    .map(([label]) => label)
+                    .join(", ")}
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 600,
+                    padding: "2px 8px",
+                    borderRadius: 999,
+                    color: "var(--text-muted)",
+                    background: "var(--surface-2)",
+                    border: "1px solid var(--border)",
+                  }}
+                >
+                  +{branchTips.length - MAX_VISIBLE_TIPS} more
+                </span>
+              )}
             </span>
           )}
         </div>

@@ -41,7 +41,7 @@ export default function WelcomeTourPrompt({ onStart, onSkip }: WelcomeTourPrompt
         </div>
         <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 8 }}>welcome to GitRoot 👋</div>
         <p style={{ margin: "0 0 22px", fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.55 }}>
-          new to git, or just want the 60-second tour? it points out what everything does. you can always take it later from the header.
+          new to git, or just want the full walkthrough? it covers every command with a real example — pull, push, commit, branches, merge, rebase, and what to do if something conflicts. you can always take it later from the header.
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <button
