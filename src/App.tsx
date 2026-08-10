@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import CommitGraph from "./components/CommitGraph";
+import CommitGraph, { type CommitActionContext } from "./components/CommitGraph";
+import CommitRangeSummary from "./components/CommitRangeSummary";
 import StagingList from "./components/StagingList";
 import CommandBar from "./components/CommandBar";
 import DetailsPanel from "./components/DetailsPanel";
@@ -177,7 +178,7 @@ export default function App() {
   const [lastAction, setLastAction] = useState<ActionDetails | null>(null);
   const [learningMode, setLearningMode] = useState(loadLearningMode);
   const [branches, setBranches] = useState<BranchInfo[]>([]);
-  const [revertTarget, setRevertTarget] = useState<{ hash: string; commitsAfter: number } | null>(null);
+  const [revertTarget, setRevertTarget] = useState<CommitActionContext | null>(null);
   const [hunkEditorFile, setHunkEditorFile] = useState<string | null>(null);
   const [lastUndo, setLastUndo] = useState<UndoAction | null>(null);
   const [undoConfirming, setUndoConfirming] = useState(false);
@@ -195,7 +196,7 @@ export default function App() {
   const [rebaseProgress, setRebaseProgress] = useState<{ current: number; total: number } | null>(null);
   const [pausedOp, setPausedOp] = useState<{ kind: "merge" | "rebase" | "revert"; target: string } | null>(null);
   const [resetFlow, setResetFlow] = useState<{
-    targetHash: string;
+    context: CommitActionContext;
     preflight: ResetPreflight;
     step: "warning" | "picker" | "confirmDiscard";
     mode: ResetMode;
@@ -586,7 +587,7 @@ export default function App() {
 
   async function confirmRevert() {
     if (!repo || !revertTarget) return;
-    const target = revertTarget.hash;
+    const target = revertTarget.target.hash;
     setRevertTarget(null);
     setBusy("revert");
     try {
@@ -606,15 +607,15 @@ export default function App() {
     }
   }
 
-  async function handlePickCommitAction(kind: "reset" | "revert", targetHash: string, commitsAfter: number) {
+  async function handlePickCommitAction(kind: "reset" | "revert", context: CommitActionContext) {
     if (!repo) return;
     if (kind === "revert") {
-      setRevertTarget({ hash: targetHash, commitsAfter });
+      setRevertTarget(context);
       return;
     }
-    const preflight = await resetPreflight(repo.path, targetHash);
+    const preflight = await resetPreflight(repo.path, context.target.hash);
     setResetFlow({
-      targetHash,
+      context,
       preflight,
       step: preflight.alreadyPushedCount > 0 ? "warning" : "picker",
       mode: "mixed",
@@ -640,7 +641,7 @@ export default function App() {
 
   async function executeReset(mode: ResetMode) {
     if (!repo || !resetFlow) return;
-    const target = resetFlow.targetHash;
+    const target = resetFlow.context.target.hash;
     setBusy("reset");
     try {
       const result = await resetToCommit(repo.path, target, mode);
@@ -927,8 +928,17 @@ export default function App() {
         {revertTarget && (
           <ConfirmDialog
             title="revert to this commit?"
-            message={revertConfirmText(revertTarget.commitsAfter, revertTarget.hash.slice(0, 7))}
-            confirmLabel={`revert ${revertTarget.commitsAfter} commit${revertTarget.commitsAfter === 1 ? "" : "s"}`}
+            message={
+              <>
+                <CommitRangeSummary
+                  context={revertTarget}
+                  afterCaption="content will match"
+                  listCaption="commits this will undo with new commits, newest first:"
+                />
+                {revertConfirmText(revertTarget.commits, revertTarget.target.hash.slice(0, 7))}
+              </>
+            }
+            confirmLabel={`revert ${revertTarget.commits} commit${revertTarget.commits === 1 ? "" : "s"}`}
             onConfirm={confirmRevert}
             onCancel={() => setRevertTarget(null)}
             busy={busy === "revert"}
@@ -999,8 +1009,7 @@ export default function App() {
       <AnimatePresence>
         {resetFlow && (
           <ResetDialog
-            targetHash={resetFlow.targetHash}
-            commits={resetFlow.preflight.commits}
+            context={resetFlow.context}
             hasUncommittedChanges={resetFlow.preflight.hasUncommittedChanges}
             step={resetFlow.step}
             mode={resetFlow.mode}

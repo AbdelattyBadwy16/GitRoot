@@ -3,13 +3,27 @@ import { AnimatePresence, motion } from "framer-motion";
 import type { CommitGraphData, GraphCommit, GraphEdge } from "../lib/gitCommands";
 import { isHead } from "../lib/graph";
 
+export interface CommitRef {
+  hash: string;
+  message: string;
+}
+
+export interface CommitActionContext {
+  target: CommitRef;
+  head: CommitRef;
+  commits: number;
+  // newest-first, capped at MAX_AFFECTED_PREVIEW
+  affected: CommitRef[];
+  affectedMore: number;
+}
+
 interface CommitGraphProps {
   graph: CommitGraphData;
   pulseHash?: string | null;
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
-  onCommitAction?: (kind: "reset" | "revert", targetHash: string, commitsAfter: number) => void;
+  onCommitAction?: (kind: "reset" | "revert", context: CommitActionContext) => void;
 }
 
 const ROW_HEIGHT = 60;
@@ -19,6 +33,7 @@ const NODE_RADIUS = 7.5;
 const MERGE_SIZE = 15;
 const TOP_PADDING = 30;
 const MAX_VISIBLE_TIPS = 6;
+const MAX_AFFECTED_PREVIEW = 5;
 
 const LANE_COLORS = [
   "var(--lane-1)",
@@ -174,6 +189,23 @@ export default function CommitGraph({
       }
     }
     return seen;
+  }
+
+  // target is always an ancestor of head here (actionEligible checks that), so every one of
+  // target's own ancestors is also an ancestor of head - the filter below is safe
+  function buildActionContext(target: GraphCommit): CommitActionContext | null {
+    const head = headHash ? byHash.get(headHash) : null;
+    if (!head) return null;
+    const excluded = ancestorsInclusive(target.hash);
+    // graph.commits is already ordered newest-first (by row), so this stays newest-first too
+    const affectedAll = graph.commits.filter((c) => headAncestors.has(c.hash) && !excluded.has(c.hash));
+    return {
+      target: { hash: target.hash, message: target.message },
+      head: { hash: head.hash, message: head.message },
+      commits: affectedAll.length,
+      affected: affectedAll.slice(0, MAX_AFFECTED_PREVIEW).map((c) => ({ hash: c.hash, message: c.message })),
+      affectedMore: Math.max(0, affectedAll.length - MAX_AFFECTED_PREVIEW),
+    };
   }
 
   const spotlight = useMemo(() => {
@@ -402,7 +434,6 @@ export default function CommitGraph({
             const labelX = LANE_X0 + graph.laneCount * LANE_WIDTH + 20;
             const lit = !spotlight || spotlight.has(commit.hash);
             const actionEligible = !!onCommitAction && !!headHash && commit.hash !== headHash && headAncestors.has(commit.hash);
-            const commitsAfter = actionEligible ? headAncestors.size - ancestorsInclusive(commit.hash).size : 0;
 
             return (
               <motion.div
@@ -593,7 +624,8 @@ export default function CommitGraph({
                     <button
                       onClick={() => {
                         setOpenMenuHash(null);
-                        onCommitAction?.("reset", commit.hash, commitsAfter);
+                        const ctx = buildActionContext(commit);
+                        if (ctx) onCommitAction?.("reset", ctx);
                       }}
                       style={{
                         display: "block",
@@ -614,7 +646,8 @@ export default function CommitGraph({
                     <button
                       onClick={() => {
                         setOpenMenuHash(null);
-                        onCommitAction?.("revert", commit.hash, commitsAfter);
+                        const ctx = buildActionContext(commit);
+                        if (ctx) onCommitAction?.("revert", ctx);
                       }}
                       style={{
                         display: "block",

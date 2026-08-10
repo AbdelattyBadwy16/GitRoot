@@ -1,10 +1,11 @@
 import type { CSSProperties } from "react";
 import { motion } from "framer-motion";
 import { resetAlreadyPushedWarning, resetDiscardConfirmText, resetModeInlineText, type ResetMode } from "../lib/explain";
+import type { CommitActionContext } from "./CommitGraph";
+import CommitRangeSummary from "./CommitRangeSummary";
 
 interface ResetDialogProps {
-  targetHash: string;
-  commits: number;
+  context: CommitActionContext;
   hasUncommittedChanges: boolean;
   step: "warning" | "picker" | "confirmDiscard";
   mode: ResetMode;
@@ -23,8 +24,7 @@ const MODES: { mode: ResetMode; label: string }[] = [
 ];
 
 export default function ResetDialog({
-  targetHash,
-  commits,
+  context,
   hasUncommittedChanges,
   step,
   mode,
@@ -35,6 +35,7 @@ export default function ResetDialog({
   onCancel,
   busy,
 }: ResetDialogProps) {
+  const commits = context.commits;
   const s = commits === 1 ? "" : "s";
 
   return (
@@ -85,6 +86,11 @@ export default function ResetDialog({
 
         {step === "warning" && (
           <>
+            <CommitRangeSummary
+              context={context}
+              afterCaption="after"
+              listCaption="commits that would move off your branch's tip:"
+            />
             <p style={{ margin: "0 0 20px", fontSize: 13.5, color: "var(--text-secondary)", lineHeight: 1.55 }}>
               {resetAlreadyPushedWarning()}
             </p>
@@ -101,8 +107,13 @@ export default function ResetDialog({
 
         {step === "picker" && (
           <>
+            <CommitRangeSummary
+              context={context}
+              afterCaption="after"
+              listCaption="commits that will move off your branch's tip:"
+            />
             <p style={{ margin: "0 0 14px", fontSize: 13.5, color: "var(--text-secondary)", lineHeight: 1.55 }}>
-              moves your branch back to {targetHash.slice(0, 7)}, {commits} commit{s} away. pick what happens to their changes.
+              {commits} commit{s} away. pick what happens to their changes.
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 }}>
               {MODES.map(({ mode: m, label }) => (
@@ -140,6 +151,11 @@ export default function ResetDialog({
 
         {step === "confirmDiscard" && (
           <>
+            <CommitRangeSummary
+              context={context}
+              afterCaption="after"
+              listCaption="commits that will be discarded, along with their changes:"
+            />
             <p style={{ margin: "0 0 20px", fontSize: 13.5, color: "var(--text-secondary)", lineHeight: 1.55 }}>
               {resetDiscardConfirmText(commits, hasUncommittedChanges)}
             </p>
