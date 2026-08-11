@@ -3,6 +3,7 @@
 
 mod git;
 mod settings;
+mod undo_history;
 
 fn main() {
     tauri::Builder::default()
@@ -11,10 +12,16 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             settings::check_tour_offered,
             settings::mark_tour_offered,
+            undo_history::load_undo_history,
+            undo_history::save_undo_history,
             git::commands::pull,
             git::commands::push,
             git::commands::stash,
             git::commands::stash_pop,
+            git::commands::list_stashes,
+            git::commands::apply_stash,
+            git::commands::pop_stash,
+            git::commands::drop_stash,
             git::commands::commit,
             git::commands::uncommit_to,
             git::commands::hard_reset_to,
@@ -35,6 +42,7 @@ fn main() {
             git::commands::reset_to_commit,
             git::commands::conflicted_files,
             git::commands::merge_preview,
+            git::commands::diff_name_status,
             git::commands::merge_branch,
             git::commands::continue_merge,
             git::commands::abort_merge,

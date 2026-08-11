@@ -449,6 +449,107 @@ fn stash_pop_sync(repo_path: String) -> Result<CommandResult, String> {
     Ok(CommandResult::ok(&command, json!({})))
 }
 
+// ===== stash list / selective restore =====
+
+#[derive(Debug, Serialize)]
+pub struct StashInfo {
+    pub stash_ref: String,
+    pub message: String,
+    pub branch: Option<String>,
+    pub date: String,
+}
+
+#[tauri::command]
+pub async fn list_stashes(repo_path: String) -> Result<Vec<StashInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_stashes_sync(repo_path))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn list_stashes_sync(repo_path: String) -> Result<Vec<StashInfo>, String> {
+    let out = run_git(&repo_path, &["stash", "list", "--format=%gd%x1f%gs%x1f%cr"])?;
+    if !out.success {
+        return Err(out.stderr);
+    }
+
+    let stashes = out
+        .stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.splitn(3, '\x1f').collect();
+            if parts.len() < 3 {
+                return None;
+            }
+            let subject = parts[1];
+            // git's default stash message is "WIP on <branch>: <hash> <msg>", or
+            // "On <branch>: <msg>" when made with `stash push -m "..."`
+            let branch = subject
+                .strip_prefix("WIP on ")
+                .or_else(|| subject.strip_prefix("On "))
+                .and_then(|rest| rest.split(':').next())
+                .map(|b| b.trim().to_string())
+                .filter(|b| !b.is_empty());
+            Some(StashInfo {
+                stash_ref: parts[0].to_string(),
+                message: subject.to_string(),
+                branch,
+                date: parts[2].to_string(),
+            })
+        })
+        .collect();
+
+    Ok(stashes)
+}
+
+#[tauri::command]
+pub async fn apply_stash(repo_path: String, stash_ref: String) -> Result<CommandResult, String> {
+    tauri::async_runtime::spawn_blocking(move || apply_stash_sync(repo_path, stash_ref))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn apply_stash_sync(repo_path: String, stash_ref: String) -> Result<CommandResult, String> {
+    let command = display_command(&["stash", "apply", &stash_ref]);
+    let result = run_git(&repo_path, &["stash", "apply", &stash_ref])?;
+    if !result.success {
+        return Ok(CommandResult::failure(&command, result.stderr));
+    }
+    Ok(CommandResult::ok(&command, json!({ "stashRef": stash_ref })))
+}
+
+#[tauri::command]
+pub async fn pop_stash(repo_path: String, stash_ref: String) -> Result<CommandResult, String> {
+    tauri::async_runtime::spawn_blocking(move || pop_stash_sync(repo_path, stash_ref))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn pop_stash_sync(repo_path: String, stash_ref: String) -> Result<CommandResult, String> {
+    let command = display_command(&["stash", "pop", &stash_ref]);
+    let result = run_git(&repo_path, &["stash", "pop", &stash_ref])?;
+    if !result.success {
+        return Ok(CommandResult::failure(&command, result.stderr));
+    }
+    Ok(CommandResult::ok(&command, json!({ "stashRef": stash_ref })))
+}
+
+#[tauri::command]
+pub async fn drop_stash(repo_path: String, stash_ref: String) -> Result<CommandResult, String> {
+    tauri::async_runtime::spawn_blocking(move || drop_stash_sync(repo_path, stash_ref))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn drop_stash_sync(repo_path: String, stash_ref: String) -> Result<CommandResult, String> {
+    let command = display_command(&["stash", "drop", &stash_ref]);
+    let result = run_git(&repo_path, &["stash", "drop", &stash_ref])?;
+    if !result.success {
+        return Ok(CommandResult::failure(&command, result.stderr));
+    }
+    Ok(CommandResult::ok(&command, json!({ "stashRef": stash_ref })))
+}
+
 #[derive(Debug, Serialize)]
 pub struct FileStatus {
     pub path: String,
@@ -1324,6 +1425,56 @@ fn merge_preview_sync(repo_path: String, target: String) -> Result<MergePreview,
         files,
         current_branch,
     })
+}
+
+// ===== file-level change preview (reset / revert / merge / rebase) =====
+
+#[derive(Debug, Serialize)]
+pub struct FileChange {
+    pub path: String,
+    pub status: String, // "added" | "deleted" | "modified" | "renamed"
+}
+
+fn parse_name_status(stdout: &str) -> Vec<FileChange> {
+    let mut files = Vec::new();
+    for line in stdout.lines() {
+        let mut parts = line.split('\t');
+        let code = match parts.next() {
+            Some(c) if !c.is_empty() => c,
+            _ => continue,
+        };
+        let status = match code.chars().next().unwrap_or(' ') {
+            'A' => "added",
+            'D' => "deleted",
+            'R' => "renamed",
+            _ => "modified",
+        };
+        // renames are "R100\told\tnew" - we want the new path, which is the last field
+        let path = match parts.last() {
+            Some(p) => p,
+            None => continue,
+        };
+        files.push(FileChange {
+            path: path.to_string(),
+            status: status.to_string(),
+        });
+    }
+    files
+}
+
+#[tauri::command]
+pub async fn diff_name_status(repo_path: String, range: String) -> Result<Vec<FileChange>, String> {
+    tauri::async_runtime::spawn_blocking(move || diff_name_status_sync(repo_path, range))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn diff_name_status_sync(repo_path: String, range: String) -> Result<Vec<FileChange>, String> {
+    let out = run_git(&repo_path, &["diff", "--name-status", &range])?;
+    if !out.success {
+        return Err(out.stderr);
+    }
+    Ok(parse_name_status(&out.stdout))
 }
 
 #[tauri::command]
