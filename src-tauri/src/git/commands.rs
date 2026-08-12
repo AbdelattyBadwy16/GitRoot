@@ -515,7 +515,10 @@ fn apply_stash_sync(repo_path: String, stash_ref: String) -> Result<CommandResul
     if !result.success {
         return Ok(CommandResult::failure(&command, result.stderr));
     }
-    Ok(CommandResult::ok(&command, json!({ "stashRef": stash_ref })))
+    Ok(CommandResult::ok(
+        &command,
+        json!({ "stashRef": stash_ref }),
+    ))
 }
 
 #[tauri::command]
@@ -531,7 +534,10 @@ fn pop_stash_sync(repo_path: String, stash_ref: String) -> Result<CommandResult,
     if !result.success {
         return Ok(CommandResult::failure(&command, result.stderr));
     }
-    Ok(CommandResult::ok(&command, json!({ "stashRef": stash_ref })))
+    Ok(CommandResult::ok(
+        &command,
+        json!({ "stashRef": stash_ref }),
+    ))
 }
 
 #[tauri::command]
@@ -547,7 +553,10 @@ fn drop_stash_sync(repo_path: String, stash_ref: String) -> Result<CommandResult
     if !result.success {
         return Ok(CommandResult::failure(&command, result.stderr));
     }
-    Ok(CommandResult::ok(&command, json!({ "stashRef": stash_ref })))
+    Ok(CommandResult::ok(
+        &command,
+        json!({ "stashRef": stash_ref }),
+    ))
 }
 
 #[derive(Debug, Serialize)]
@@ -1450,7 +1459,7 @@ fn parse_name_status(stdout: &str) -> Vec<FileChange> {
             _ => "modified",
         };
         // renames are "R100\told\tnew" - we want the new path, which is the last field
-        let path = match parts.last() {
+        let path = match parts.next_back() {
             Some(p) => p,
             None => continue,
         };

@@ -113,7 +113,11 @@ mod tests {
         let dir = temp_repo_dir();
         let repo_path = dir.to_string_lossy().to_string();
 
-        save_undo_history_sync(repo_path.clone(), vec![sample_entry("a"), sample_entry("b")]).unwrap();
+        save_undo_history_sync(
+            repo_path.clone(),
+            vec![sample_entry("a"), sample_entry("b")],
+        )
+        .unwrap();
         save_undo_history_sync(repo_path.clone(), vec![sample_entry("c")]).unwrap();
 
         let loaded = load_undo_history_sync(repo_path).unwrap();

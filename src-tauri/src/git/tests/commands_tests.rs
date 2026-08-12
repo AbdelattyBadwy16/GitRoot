@@ -1226,7 +1226,10 @@ fn drop_stash_removes_only_the_targeted_entry() {
     let remaining = list_stashes_sync(repo.path.clone()).unwrap();
     assert_eq!(remaining.len(), 1, "only the other entry should remain");
     assert!(
-        !repo.git(&["status", "--porcelain"]).stdout.contains("README.md"),
+        !repo
+            .git(&["status", "--porcelain"])
+            .stdout
+            .contains("README.md"),
         "a dropped entry's change must not come back to the working tree"
     );
 }
