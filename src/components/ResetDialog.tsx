@@ -2,13 +2,18 @@ import type { CSSProperties } from "react";
 import { motion } from "framer-motion";
 import { resetAlreadyPushedWarning, resetDiscardConfirmText, resetModeInlineText, type ResetMode } from "../lib/explain";
 import type { CommitActionContext } from "./CommitGraph";
+import type { FileChange } from "../lib/gitCommands";
 import CommitRangeSummary from "./CommitRangeSummary";
+import PreviewTabs from "./PreviewTabs";
+import FileChangesList from "./FileChangesList";
 
 interface ResetDialogProps {
   context: CommitActionContext;
   hasUncommittedChanges: boolean;
   step: "warning" | "picker" | "confirmDiscard";
   mode: ResetMode;
+  previewFiles: FileChange[] | null;
+  previewFilesLoading: boolean;
   onModeChange: (mode: ResetMode) => void;
   onConfirmWarning: () => void;
   onConfirmPicker: () => void;
@@ -28,6 +33,8 @@ export default function ResetDialog({
   hasUncommittedChanges,
   step,
   mode,
+  previewFiles,
+  previewFilesLoading,
   onModeChange,
   onConfirmWarning,
   onConfirmPicker,
@@ -37,6 +44,8 @@ export default function ResetDialog({
 }: ResetDialogProps) {
   const commits = context.commits;
   const s = commits === 1 ? "" : "s";
+  const filesTab = <FileChangesList files={previewFiles ?? []} loading={previewFilesLoading} />;
+  const filesCount = previewFiles?.length ?? 0;
 
   return (
     <motion.div
@@ -86,10 +95,16 @@ export default function ResetDialog({
 
         {step === "warning" && (
           <>
-            <CommitRangeSummary
-              context={context}
-              afterCaption="after"
-              listCaption="commits that would move off your branch's tip:"
+            <PreviewTabs
+              commitsContent={
+                <CommitRangeSummary
+                  context={context}
+                  afterCaption="after"
+                  listCaption="commits that would move off your branch's tip:"
+                />
+              }
+              filesContent={filesTab}
+              filesCount={filesCount}
             />
             <p style={{ margin: "0 0 20px", fontSize: 13.5, color: "var(--text-secondary)", lineHeight: 1.55 }}>
               {resetAlreadyPushedWarning()}
@@ -107,10 +122,16 @@ export default function ResetDialog({
 
         {step === "picker" && (
           <>
-            <CommitRangeSummary
-              context={context}
-              afterCaption="after"
-              listCaption="commits that will move off your branch's tip:"
+            <PreviewTabs
+              commitsContent={
+                <CommitRangeSummary
+                  context={context}
+                  afterCaption="after"
+                  listCaption="commits that will move off your branch's tip:"
+                />
+              }
+              filesContent={filesTab}
+              filesCount={filesCount}
             />
             <p style={{ margin: "0 0 14px", fontSize: 13.5, color: "var(--text-secondary)", lineHeight: 1.55 }}>
               {commits} commit{s} away. pick what happens to their changes.
@@ -151,10 +172,16 @@ export default function ResetDialog({
 
         {step === "confirmDiscard" && (
           <>
-            <CommitRangeSummary
-              context={context}
-              afterCaption="after"
-              listCaption="commits that will be discarded, along with their changes:"
+            <PreviewTabs
+              commitsContent={
+                <CommitRangeSummary
+                  context={context}
+                  afterCaption="after"
+                  listCaption="commits that will be discarded, along with their changes:"
+                />
+              }
+              filesContent={filesTab}
+              filesCount={filesCount}
             />
             <p style={{ margin: "0 0 20px", fontSize: 13.5, color: "var(--text-secondary)", lineHeight: 1.55 }}>
               {resetDiscardConfirmText(commits, hasUncommittedChanges)}

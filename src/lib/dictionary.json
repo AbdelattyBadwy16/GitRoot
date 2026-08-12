@@ -24,6 +24,21 @@
     "steps": ["took every tracked change out of your working directory", "saved {n} file{s} as a stash entry", "your working directory is clean now"],
     "stepsZero": ["checked your working directory", "nothing tracked was changed — there was nothing to set aside"]
   },
+  "applyStash": {
+    "meaning": "brings \"{target}\" back into your working directory, keeping the stash entry.",
+    "result": "applied \"{target}\" — it's still in your stash list too.",
+    "steps": ["took the stashed changes", "reapplied them to your working directory", "kept the stash entry in case you need it again"]
+  },
+  "popStash": {
+    "meaning": "brings \"{target}\" back into your working directory and removes the stash entry.",
+    "result": "popped \"{target}\" — it's back in your working directory.",
+    "steps": ["took the stashed changes", "reapplied them to your working directory", "removed the stash entry since it's been restored"]
+  },
+  "dropStash": {
+    "meaning": "deletes \"{target}\" for good — the changes it held are gone.",
+    "result": "dropped \"{target}\" for good.",
+    "steps": ["found the stash entry", "deleted it", "the changes it held can't be brought back"]
+  },
   "commit": {
     "meaning": "saves your staged changes as a new point in your branch's history.",
     "result": "committed {n} file{s} to {branch}.",

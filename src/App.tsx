@@ -2,10 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import CommitGraph, { type CommitActionContext } from "./components/CommitGraph";
 import CommitRangeSummary from "./components/CommitRangeSummary";
+import FileChangesList from "./components/FileChangesList";
+import PreviewTabs from "./components/PreviewTabs";
 import StagingList from "./components/StagingList";
 import CommandBar from "./components/CommandBar";
 import DetailsPanel from "./components/DetailsPanel";
 import BranchesTab from "./components/BranchesTab";
+import StashTab from "./components/StashTab";
 import HunkEditor from "./components/HunkEditor";
 import ConfirmDialog from "./components/ConfirmDialog";
 import ConflictDialog from "./components/ConflictDialog";
@@ -57,6 +60,13 @@ import {
   getRebaseStatus,
   continueRebase,
   abortRebase,
+  diffNameStatus,
+  listStashes,
+  applyStash,
+  popStash,
+  dropStash,
+  loadUndoHistory,
+  saveUndoHistory,
   type RepoInfo,
   type FileStatus,
   type CommitGraphData,
@@ -67,6 +77,9 @@ import {
   type RebasePreflight,
   type ResetPreflight,
   type ResetMode,
+  type FileChange,
+  type StashInfo,
+  type UndoHistoryEntry,
 } from "./lib/gitCommands";
 import {
   explainDetails,
@@ -84,7 +97,7 @@ import { isHead } from "./lib/graph";
 const EMPTY_GRAPH: CommitGraphData = { commits: [], edges: [], laneCount: 0, hasMore: false };
 const GRAPH_PAGE_SIZE = 30;
 
-type Tab = "graph" | "commit" | "branches";
+type Tab = "graph" | "commit" | "branches" | "stash";
 
 type UndoAction =
   | { kind: "pull"; targetHash: string }
@@ -158,6 +171,39 @@ function withTarget(result: CommandResult, target: string): CommandResult {
   return { ...result, data: { ...result.data, target } };
 }
 
+// how many past actions the undo history keeps around, most-recent-first - old enough to be
+// genuinely useful, capped so the persisted file and the dropdown both stay reasonable
+const MAX_UNDO_HISTORY = 20;
+
+interface UndoHistoryItem {
+  id: string;
+  action: UndoAction;
+  timestampMs: number;
+}
+
+function genId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function toPersistedEntry(item: UndoHistoryItem): UndoHistoryEntry {
+  return { id: item.id, kind: item.action.kind, action: item.action, label: UNDO_LABEL[item.action.kind], timestampMs: item.timestampMs };
+}
+
+function fromPersistedEntry(entry: UndoHistoryEntry): UndoHistoryItem {
+  return { id: entry.id, action: entry.action as UndoAction, timestampMs: entry.timestampMs };
+}
+
+function relativeTime(ms: number): string {
+  const diffSec = Math.round((Date.now() - ms) / 1000);
+  if (diffSec < 60) return "just now";
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHour = Math.round(diffMin / 60);
+  if (diffHour < 24) return `${diffHour}h ago`;
+  const diffDay = Math.round(diffHour / 24);
+  return `${diffDay}d ago`;
+}
+
 const LEARNING_MODE_KEY = "gitroot:learningMode";
 
 function loadLearningMode(): boolean {
@@ -178,10 +224,36 @@ export default function App() {
   const [lastAction, setLastAction] = useState<ActionDetails | null>(null);
   const [learningMode, setLearningMode] = useState(loadLearningMode);
   const [branches, setBranches] = useState<BranchInfo[]>([]);
+  const [stashes, setStashes] = useState<StashInfo[]>([]);
+  const [dropStashTarget, setDropStashTarget] = useState<StashInfo | null>(null);
   const [revertTarget, setRevertTarget] = useState<CommitActionContext | null>(null);
   const [hunkEditorFile, setHunkEditorFile] = useState<string | null>(null);
-  const [lastUndo, setLastUndo] = useState<UndoAction | null>(null);
-  const [undoConfirming, setUndoConfirming] = useState(false);
+  const [undoHistory, setUndoHistory] = useState<UndoHistoryItem[]>([]);
+  const [undoConfirmingId, setUndoConfirmingId] = useState<string | null>(null);
+  const [undoHistoryOpen, setUndoHistoryOpen] = useState(false);
+  const lastUndo = undoHistory[0] ?? null;
+  const undoConfirming = undoHistory.find((h) => h.id === undoConfirmingId) ?? null;
+
+  function pushUndoHistory(action: UndoAction) {
+    if (!repo) return;
+    const next = [{ id: genId(), action, timestampMs: Date.now() }, ...undoHistory].slice(0, MAX_UNDO_HISTORY);
+    setUndoHistory(next);
+    saveUndoHistory(repo.path, next.map(toPersistedEntry)).catch(() => {});
+  }
+
+  // most call sites just have a raw UndoAction | null from computeUndo - this is the
+  // "record it if there's anything to record" shortcut for those
+  function recordUndo(action: UndoAction | null) {
+    if (action) pushUndoHistory(action);
+  }
+
+  function removeUndoHistoryEntry(id: string) {
+    setUndoHistory((prev) => {
+      const next = prev.filter((h) => h.id !== id);
+      if (repo) saveUndoHistory(repo.path, next.map(toPersistedEntry)).catch(() => {});
+      return next;
+    });
+  }
   const [gitAvailable, setGitAvailable] = useState<boolean | null>(null);
   const [gitIdentity, setGitIdentity] = useState<GitIdentity | null>(null);
   const [showTourPrompt, setShowTourPrompt] = useState(false);
@@ -190,6 +262,23 @@ export default function App() {
   // merge/rebase pickers with only one branch) force-show a preview instead, so the tour always
   // has something real to point at
   const touring = tourStep !== null;
+
+  // file-level "what will change" preview shared by reset/revert/merge/rebase dialogs -
+  // only one of those dialogs is ever open at once, so a single slot is enough
+  const [previewFiles, setPreviewFiles] = useState<FileChange[] | null>(null);
+  const [previewFilesLoading, setPreviewFilesLoading] = useState(false);
+
+  async function loadPreviewFiles(repoPath: string, range: string) {
+    setPreviewFiles(null);
+    setPreviewFilesLoading(true);
+    try {
+      setPreviewFiles(await diffNameStatus(repoPath, range));
+    } catch {
+      setPreviewFiles([]);
+    } finally {
+      setPreviewFilesLoading(false);
+    }
+  }
 
   const [mergeConfirm, setMergeConfirm] = useState<{ target: string; preview: MergePreview } | null>(null);
   const [rebaseFlow, setRebaseFlow] = useState<{ step: "warning" | "plan"; target: string; preflight: RebasePreflight } | null>(null);
@@ -231,10 +320,11 @@ export default function App() {
   const [cloning, setCloning] = useState(false);
 
   async function refresh(path: string, limit: number = graphLimit): Promise<CommitGraphData> {
-    const [g, s, b] = await Promise.all([getCommitGraph(path, limit), getStatus(path), listBranches(path)]);
+    const [g, s, b, st] = await Promise.all([getCommitGraph(path, limit), getStatus(path), listBranches(path), listStashes(path)]);
     setGraph(g);
     setFiles(s);
     setBranches(b);
+    setStashes(st);
     const current = b.find((x) => x.isCurrent)?.name;
     if (current) {
       setRepo((r) => (r && r.path === path && r.currentBranch !== current ? { ...r, currentBranch: current } : r));
@@ -315,13 +405,19 @@ export default function App() {
     setGraphLimit(GRAPH_PAGE_SIZE);
     setActiveTab("graph");
     setHunkEditorFile(null);
-    setLastUndo(null);
+    // undo history is scoped per-repo and persisted in that repo's own .git dir, so switching
+    // repos means loading whatever history that repo already has, not clearing to empty
+    setUndoHistory([]);
+    loadUndoHistory(info.path)
+      .then((entries) => setUndoHistory(entries.map(fromPersistedEntry)))
+      .catch(() => setUndoHistory([]));
     // clear this so it does not poll or act on the wrong repo after switching
     setMergeConfirm(null);
     setRebaseFlow(null);
     setRebaseProgress(null);
     setPausedOp(null);
     setResetFlow(null);
+    setPreviewFiles(null);
     await refresh(info.path, GRAPH_PAGE_SIZE);
     checkGitIdentity(info.path)
       .then(setGitIdentity)
@@ -412,7 +508,7 @@ export default function App() {
         return;
       }
       const details = applyResult(name, result);
-      if (!details.isError) setLastUndo(computeUndo(name, result));
+      if (!details.isError) recordUndo(computeUndo(name, result));
       const g = await refresh(repo.path);
       if (!details.isError && name !== "stash") pulseHead(g);
     } finally {
@@ -440,7 +536,7 @@ export default function App() {
       if (!details.isError) {
         setMessage("");
         setActiveTab("graph");
-        setLastUndo(computeUndo("commit", result));
+        recordUndo(computeUndo("commit", result));
       }
       const g = await refresh(repo.path);
       if (!details.isError) pulseHead(g);
@@ -455,7 +551,7 @@ export default function App() {
     try {
       const result = await switchBranch(repo.path, name);
       const details = applyResult("switchBranch", result);
-      if (!details.isError) setLastUndo(computeUndo("switchBranch", result));
+      if (!details.isError) recordUndo(computeUndo("switchBranch", result));
       const g = await refresh(repo.path);
       if (!details.isError) pulseHead(g);
     } finally {
@@ -469,9 +565,50 @@ export default function App() {
     try {
       const result = await createBranch(repo.path, name, startPoint);
       const details = applyResult("createBranch", result);
-      if (!details.isError) setLastUndo(computeUndo("createBranch", result));
+      if (!details.isError) recordUndo(computeUndo("createBranch", result));
       const g = await refresh(repo.path);
       if (!details.isError) pulseHead(g);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleApplyStash(stash: StashInfo) {
+    if (!repo) return;
+    setBusy("applyStash");
+    try {
+      const result = await applyStash(repo.path, stash.stashRef);
+      // withTarget so the result text can name which stash this was ({target}), not just
+      // say "applied the stash" - the backend only knows the ref, the frontend already has
+      // the human message right here
+      applyResult("applyStash", withTarget(result, stash.message));
+      await refresh(repo.path);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handlePopStash(stash: StashInfo) {
+    if (!repo) return;
+    setBusy("popStash");
+    try {
+      const result = await popStash(repo.path, stash.stashRef);
+      applyResult("popStash", withTarget(result, stash.message));
+      await refresh(repo.path);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function confirmDropStash() {
+    if (!repo || !dropStashTarget) return;
+    const stash = dropStashTarget;
+    setDropStashTarget(null);
+    setBusy("dropStash");
+    try {
+      const result = await dropStash(repo.path, stash.stashRef);
+      applyResult("dropStash", withTarget(result, stash.message));
+      await refresh(repo.path);
     } finally {
       setBusy(null);
     }
@@ -481,12 +618,14 @@ export default function App() {
     if (!repo) return;
     const preview = await mergePreview(repo.path, target);
     setMergeConfirm({ target, preview });
+    loadPreviewFiles(repo.path, `HEAD...${target}`);
   }
 
   async function confirmMerge() {
     if (!repo || !mergeConfirm) return;
     const target = mergeConfirm.target;
     setMergeConfirm(null);
+    setPreviewFiles(null);
     setBusy("merge");
     try {
       const result = await mergeBranch(repo.path, target);
@@ -508,6 +647,7 @@ export default function App() {
     if (!repo) return;
     const preflight = await rebasePreflight(repo.path, target);
     setRebaseFlow({ step: preflight.alreadyPushedCount > 0 ? "warning" : "plan", target, preflight });
+    loadPreviewFiles(repo.path, `${target}...HEAD`);
   }
 
   function confirmRebaseWarning() {
@@ -519,6 +659,7 @@ export default function App() {
     if (!repo || !rebaseFlow) return;
     const target = rebaseFlow.target;
     setRebaseFlow(null);
+    setPreviewFiles(null);
     setBusy("rebase");
     const poll = window.setInterval(async () => {
       try {
@@ -562,7 +703,7 @@ export default function App() {
       }
       setPausedOp(null);
       const details = applyResult(pausedOp.kind, result);
-      if (!details.isError && pausedOp.kind === "revert") setLastUndo(computeUndo("revert", result));
+      if (!details.isError && pausedOp.kind === "revert") recordUndo(computeUndo("revert", result));
       const g = await refresh(repo.path);
       if (!details.isError) pulseHead(g);
     } finally {
@@ -589,6 +730,7 @@ export default function App() {
     if (!repo || !revertTarget) return;
     const target = revertTarget.target.hash;
     setRevertTarget(null);
+    setPreviewFiles(null);
     setBusy("revert");
     try {
       const result = await revertToCommit(repo.path, target);
@@ -599,7 +741,7 @@ export default function App() {
         return;
       }
       const details = applyResult("revert", result);
-      if (!details.isError) setLastUndo(computeUndo("revert", result));
+      if (!details.isError) recordUndo(computeUndo("revert", result));
       const g = await refresh(repo.path);
       if (!details.isError) pulseHead(g);
     } finally {
@@ -609,8 +751,10 @@ export default function App() {
 
   async function handlePickCommitAction(kind: "reset" | "revert", context: CommitActionContext) {
     if (!repo) return;
+    const range = `${context.target.hash}..${context.head.hash}`;
     if (kind === "revert") {
       setRevertTarget(context);
+      loadPreviewFiles(repo.path, range);
       return;
     }
     const preflight = await resetPreflight(repo.path, context.target.hash);
@@ -620,6 +764,7 @@ export default function App() {
       step: preflight.alreadyPushedCount > 0 ? "warning" : "picker",
       mode: "mixed",
     });
+    loadPreviewFiles(repo.path, range);
   }
 
   function confirmResetWarning() {
@@ -646,8 +791,9 @@ export default function App() {
     try {
       const result = await resetToCommit(repo.path, target, mode);
       const details = applyResult("reset", result);
-      if (!details.isError) setLastUndo(computeUndo("reset", result));
+      if (!details.isError) recordUndo(computeUndo("reset", result));
       setResetFlow(null);
+      setPreviewFiles(null);
       const g = await refresh(repo.path);
       if (!details.isError) pulseHead(g);
     } finally {
@@ -655,9 +801,15 @@ export default function App() {
     }
   }
 
-  async function handleUndo() {
-    if (!repo || !lastUndo) return;
-    const action = lastUndo;
+  // undoes one specific entry from the history, not necessarily the most recent - each entry
+  // just replays its own reverse command against the repo's current state, independent of
+  // whatever else has happened since (git has no real transactional undo; this is the same
+  // limitation that already existed for "undo last action", just no longer hidden behind it
+  // always being the most recent thing)
+  async function handleUndo(entryId: string) {
+    const entry = undoHistory.find((h) => h.id === entryId);
+    if (!repo || !entry) return;
+    const action = entry.action;
     setBusy("undo");
     try {
       let result: CommandResult;
@@ -680,7 +832,7 @@ export default function App() {
           result = await undoCreateBranch(repo.path, action.name, action.startPoint);
           break;
         case "push": {
-          setLastUndo(null); // not safe to just retry this if it fail halfway
+          removeUndoHistoryEntry(entryId); // not safe to just retry this if it fail halfway
           const revertResult = await revertToCommit(repo.path, action.targetHash);
           if (!revertResult.success) {
             result = revertResult;
@@ -692,7 +844,7 @@ export default function App() {
         }
       }
       const details = applyResult("undo", result);
-      if (!details.isError) setLastUndo(null);
+      if (!details.isError) removeUndoHistoryEntry(entryId);
       const g = await refresh(repo.path);
       if (!details.isError) pulseHead(g);
     } finally {
@@ -781,37 +933,123 @@ export default function App() {
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <AnimatePresence>
-            {(lastUndo || touring) && (
-              <motion.button
-                key="undo"
-                data-tour="undo-button"
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9 }}
-                onClick={() => lastUndo && setUndoConfirming(true)}
-                disabled={!!busy || !lastUndo}
-                title={lastUndo ? undefined : "appears here after an action that can be safely undone"}
+          <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 4 }}>
+            <AnimatePresence>
+              {(lastUndo || touring) && (
+                <motion.button
+                  key="undo"
+                  data-tour="undo-button"
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  onClick={() => lastUndo && setUndoConfirmingId(lastUndo.id)}
+                  disabled={!!busy || !lastUndo}
+                  title={lastUndo ? undefined : "appears here after an action that can be safely undone"}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    background: "color-mix(in srgb, var(--lane-4) 12%, var(--surface-1))",
+                    border: "1px solid color-mix(in srgb, var(--lane-4) 40%, transparent)",
+                    borderRadius: 7,
+                    padding: "5px 10px",
+                    color: "var(--lane-4)",
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    cursor: busy || !lastUndo ? "default" : "pointer",
+                    opacity: lastUndo ? 1 : 0.55,
+                  }}
+                >
+                  <UndoIcon />
+                  {lastUndo ? UNDO_LABEL[lastUndo.action.kind] : "undo last action"}
+                </motion.button>
+              )}
+            </AnimatePresence>
+            {undoHistory.length > 1 && (
+              <button
+                onClick={() => setUndoHistoryOpen((o) => !o)}
+                disabled={!!busy}
+                title="show undo history"
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 6,
-                  background: "color-mix(in srgb, var(--lane-4) 12%, var(--surface-1))",
-                  border: "1px solid color-mix(in srgb, var(--lane-4) 40%, transparent)",
+                  justifyContent: "center",
+                  minWidth: 22,
+                  height: 22,
+                  padding: "0 6px",
                   borderRadius: 7,
-                  padding: "5px 10px",
-                  color: "var(--lane-4)",
-                  fontSize: 12.5,
-                  fontWeight: 600,
-                  cursor: busy || !lastUndo ? "default" : "pointer",
-                  opacity: lastUndo ? 1 : 0.55,
+                  border: "1px solid var(--border)",
+                  background: undoHistoryOpen ? "var(--surface-2)" : "var(--surface-1)",
+                  color: "var(--text-secondary)",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: busy ? "default" : "pointer",
+                  opacity: busy ? 0.55 : 1,
                 }}
               >
-                <UndoIcon />
-                {lastUndo ? UNDO_LABEL[lastUndo.kind] : "undo last action"}
-              </motion.button>
+                {undoHistory.length}
+              </button>
             )}
-          </AnimatePresence>
+            {undoHistoryOpen && undoHistory.length > 1 && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: "calc(100% + 6px)",
+                  right: 0,
+                  zIndex: 50,
+                  width: 260,
+                  borderRadius: 10,
+                  border: "1px solid var(--border)",
+                  background: "var(--surface-1)",
+                  boxShadow: "0 12px 30px rgba(0,0,0,0.35)",
+                  overflow: "hidden",
+                }}
+              >
+                <div style={{ padding: "8px 12px", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
+                  undo history
+                </div>
+                <div style={{ maxHeight: 52 * 5, overflowY: "auto" }}>
+                  {undoHistory.map((h, i) => (
+                    <div
+                      key={h.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "8px 12px",
+                        borderTop: i === 0 ? "none" : "1px solid var(--border)",
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>{UNDO_LABEL[h.action.kind]}</div>
+                        <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{relativeTime(h.timestampMs)}</div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setUndoConfirmingId(h.id);
+                          setUndoHistoryOpen(false);
+                        }}
+                        disabled={!!busy}
+                        style={{
+                          padding: "4px 10px",
+                          borderRadius: 6,
+                          border: "1px solid color-mix(in srgb, var(--lane-4) 40%, transparent)",
+                          background: "color-mix(in srgb, var(--lane-4) 12%, var(--surface-1))",
+                          color: "var(--lane-4)",
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: busy ? "default" : "pointer",
+                          flexShrink: 0,
+                        }}
+                      >
+                        undo
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
           <LearningModeToggle value={learningMode} onChange={setLearningMode} />
           <button
             onClick={() => tourGoTo(0)}
@@ -859,9 +1097,12 @@ export default function App() {
           learningMode={learningMode}
         />
 
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
           <TabBar active={activeTab} onChange={setActiveTab} />
-          <div style={{ flex: 1, overflow: "auto" }}>
+          {/* minHeight: 0 is load-bearing here - without it this flex item refuses to
+              shrink below its content's height (the commit graph's ever-growing canvas),
+              so overflow: auto never actually clips/scrolls and the whole window grows instead */}
+          <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
             {activeTab === "commit" && hunkEditorFile ? (
               <HunkEditor
                 repoPath={repo.path}
@@ -900,6 +1141,14 @@ export default function App() {
                 rebaseBusy={!!busy}
                 touring={touring}
               />
+            ) : activeTab === "stash" ? (
+              <StashTab
+                stashes={stashes}
+                busy={!!busy}
+                onApply={handleApplyStash}
+                onPop={handlePopStash}
+                onRequestDrop={setDropStashTarget}
+              />
             ) : (
               <div data-tour="graph" style={{ padding: 20 }}>
                 <CommitGraph
@@ -930,33 +1179,43 @@ export default function App() {
             title="revert to this commit?"
             message={
               <>
-                <CommitRangeSummary
-                  context={revertTarget}
-                  afterCaption="content will match"
-                  listCaption="commits this will undo with new commits, newest first:"
+                <PreviewTabs
+                  commitsContent={
+                    <CommitRangeSummary
+                      context={revertTarget}
+                      afterCaption="content will match"
+                      listCaption="commits this will undo with new commits, newest first:"
+                    />
+                  }
+                  filesContent={<FileChangesList files={previewFiles ?? []} loading={previewFilesLoading} />}
+                  filesCount={previewFiles?.length ?? 0}
                 />
                 {revertConfirmText(revertTarget.commits, revertTarget.target.hash.slice(0, 7))}
               </>
             }
             confirmLabel={`revert ${revertTarget.commits} commit${revertTarget.commits === 1 ? "" : "s"}`}
             onConfirm={confirmRevert}
-            onCancel={() => setRevertTarget(null)}
+            onCancel={() => {
+              setRevertTarget(null);
+              setPreviewFiles(null);
+            }}
             busy={busy === "revert"}
           />
         )}
       </AnimatePresence>
 
       <AnimatePresence>
-        {undoConfirming && lastUndo && (
+        {undoConfirming && (
           <ConfirmDialog
             title="undo this?"
-            message={undoConfirmText(lastUndo)}
-            confirmLabel={UNDO_LABEL[lastUndo.kind]}
+            message={undoConfirmText(undoConfirming.action)}
+            confirmLabel={UNDO_LABEL[undoConfirming.action.kind]}
             onConfirm={() => {
-              setUndoConfirming(false);
-              handleUndo();
+              const id = undoConfirming.id;
+              setUndoConfirmingId(null);
+              handleUndo(id);
             }}
-            onCancel={() => setUndoConfirming(false)}
+            onCancel={() => setUndoConfirmingId(null)}
             busy={busy === "undo"}
           />
         )}
@@ -966,16 +1225,25 @@ export default function App() {
         {mergeConfirm && (
           <ConfirmDialog
             title={mergeConfirm.preview.outcome === "conflict" ? "merge would conflict" : "merge this branch?"}
-            message={mergePreviewText(
-              mergeConfirm.preview.outcome,
-              mergeConfirm.preview.commits,
-              mergeConfirm.preview.currentBranch,
-              mergeConfirm.target,
-              mergeConfirm.preview.files
-            )}
+            message={
+              <PreviewTabs
+                commitsContent={mergePreviewText(
+                  mergeConfirm.preview.outcome,
+                  mergeConfirm.preview.commits,
+                  mergeConfirm.preview.currentBranch,
+                  mergeConfirm.target,
+                  mergeConfirm.preview.files
+                )}
+                filesContent={<FileChangesList files={previewFiles ?? []} loading={previewFilesLoading} />}
+                filesCount={previewFiles?.length ?? 0}
+              />
+            }
             confirmLabel="merge"
             onConfirm={confirmMerge}
-            onCancel={() => setMergeConfirm(null)}
+            onCancel={() => {
+              setMergeConfirm(null);
+              setPreviewFiles(null);
+            }}
             busy={busy === "merge"}
           />
         )}
@@ -988,7 +1256,10 @@ export default function App() {
             message={rebaseAlreadyPushedWarning()}
             confirmLabel="continue anyway"
             onConfirm={confirmRebaseWarning}
-            onCancel={() => setRebaseFlow(null)}
+            onCancel={() => {
+              setRebaseFlow(null);
+              setPreviewFiles(null);
+            }}
           />
         )}
       </AnimatePresence>
@@ -997,10 +1268,19 @@ export default function App() {
         {rebaseFlow?.step === "plan" && (
           <ConfirmDialog
             title="rebase this branch?"
-            message={rebasePlanText(rebaseFlow.preflight.totalCommits, rebaseFlow.preflight.currentBranch, rebaseFlow.target)}
+            message={
+              <PreviewTabs
+                commitsContent={rebasePlanText(rebaseFlow.preflight.totalCommits, rebaseFlow.preflight.currentBranch, rebaseFlow.target)}
+                filesContent={<FileChangesList files={previewFiles ?? []} loading={previewFilesLoading} />}
+                filesCount={previewFiles?.length ?? 0}
+              />
+            }
             confirmLabel="rebase"
             onConfirm={confirmRebasePlan}
-            onCancel={() => setRebaseFlow(null)}
+            onCancel={() => {
+              setRebaseFlow(null);
+              setPreviewFiles(null);
+            }}
             busy={busy === "rebase"}
           />
         )}
@@ -1013,12 +1293,30 @@ export default function App() {
             hasUncommittedChanges={resetFlow.preflight.hasUncommittedChanges}
             step={resetFlow.step}
             mode={resetFlow.mode}
+            previewFiles={previewFiles}
+            previewFilesLoading={previewFilesLoading}
             onModeChange={(mode) => setResetFlow((rf) => (rf ? { ...rf, mode } : rf))}
             onConfirmWarning={confirmResetWarning}
             onConfirmPicker={confirmResetPicker}
             onConfirmDiscard={confirmResetDiscard}
-            onCancel={() => setResetFlow(null)}
+            onCancel={() => {
+              setResetFlow(null);
+              setPreviewFiles(null);
+            }}
             busy={busy === "reset"}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {dropStashTarget && (
+          <ConfirmDialog
+            title="drop this stash?"
+            message={`this deletes "${dropStashTarget.message}" for good — the changes it held can't be brought back.`}
+            confirmLabel="drop stash"
+            onConfirm={confirmDropStash}
+            onCancel={() => setDropStashTarget(null)}
+            busy={busy === "dropStash"}
           />
         )}
       </AnimatePresence>
@@ -1065,6 +1363,7 @@ const TAB_LABELS: { key: Tab; label: string }[] = [
   { key: "graph", label: "graph" },
   { key: "commit", label: "commit" },
   { key: "branches", label: "branches" },
+  { key: "stash", label: "stash" },
 ];
 
 function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void }) {

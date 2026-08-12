@@ -1146,6 +1146,95 @@ fn stash_pop_brings_back_what_stash_set_aside() {
 }
 
 #[test]
+fn list_stashes_reports_every_entry_newest_first_with_branch_parsed_out() {
+    let repo = TestRepo::new(); // starts on "main"
+    repo.write("README.md", "hello\nfirst change\n");
+    assert!(stash_sync(repo.path.clone()).unwrap().success);
+
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    repo.write("README.md", "hello\nsecond change\n");
+    assert!(stash_sync(repo.path.clone()).unwrap().success);
+
+    let stashes = list_stashes_sync(repo.path.clone()).unwrap();
+    assert_eq!(stashes.len(), 2, "{stashes:?}");
+    assert_eq!(stashes[0].stash_ref, "stash@{0}");
+    assert_eq!(stashes[0].branch.as_deref(), Some("feature"));
+    assert_eq!(stashes[1].stash_ref, "stash@{1}");
+    assert_eq!(stashes[1].branch.as_deref(), Some("main"));
+}
+
+#[test]
+fn list_stashes_is_empty_for_a_repo_with_no_stashes() {
+    let repo = TestRepo::new();
+    assert!(list_stashes_sync(repo.path.clone()).unwrap().is_empty());
+}
+
+#[test]
+fn apply_stash_keeps_the_entry_so_it_can_still_be_dropped_later() {
+    let repo = TestRepo::new();
+    repo.write("README.md", "hello\nchanged\n");
+    assert!(stash_sync(repo.path.clone()).unwrap().success);
+
+    let result = apply_stash_sync(repo.path.clone(), "stash@{0}".to_string()).unwrap();
+    assert!(result.success);
+    let status = repo.git(&["status", "--porcelain"]);
+    assert!(status.stdout.contains("README.md"), "{}", status.stdout);
+    assert_eq!(
+        list_stashes_sync(repo.path.clone()).unwrap().len(),
+        1,
+        "apply should not consume the stash entry"
+    );
+}
+
+#[test]
+fn pop_stash_targets_a_specific_entry_not_just_the_top_of_the_stack() {
+    let repo = TestRepo::new();
+    repo.commit_new_file("b.txt", "1\n", "add b.txt");
+    // plain `git stash` only picks up tracked changes, so both entries need to
+    // touch files git already knows about (README.md from TestRepo::new, b.txt here)
+    repo.write("README.md", "hello\nfirst change\n");
+    assert!(stash_sync(repo.path.clone()).unwrap().success); // becomes stash@{0}, then {1}
+    repo.write("b.txt", "2\n");
+    assert!(stash_sync(repo.path.clone()).unwrap().success); // stash@{0}, pushes README's to {1}
+
+    // pop the OLDER entry (now stash@{1}), the newer one (stash@{0}) should be untouched
+    let result = pop_stash_sync(repo.path.clone(), "stash@{1}".to_string()).unwrap();
+    assert!(result.success, "{:?}", result.raw_stderr);
+
+    let status = repo.git(&["status", "--porcelain"]);
+    assert!(
+        status.stdout.contains("README.md"),
+        "the older stash's change should be restored: {}",
+        status.stdout
+    );
+    let remaining = list_stashes_sync(repo.path.clone()).unwrap();
+    assert_eq!(remaining.len(), 1, "only the popped entry should be gone");
+}
+
+#[test]
+fn drop_stash_removes_only_the_targeted_entry() {
+    let repo = TestRepo::new();
+    repo.commit_new_file("b.txt", "1\n", "add b.txt");
+    repo.write("README.md", "hello\nfirst change\n");
+    assert!(stash_sync(repo.path.clone()).unwrap().success);
+    repo.write("b.txt", "2\n");
+    assert!(stash_sync(repo.path.clone()).unwrap().success);
+
+    let result = drop_stash_sync(repo.path.clone(), "stash@{1}".to_string()).unwrap();
+    assert!(result.success, "{:?}", result.raw_stderr);
+
+    let remaining = list_stashes_sync(repo.path.clone()).unwrap();
+    assert_eq!(remaining.len(), 1, "only the other entry should remain");
+    assert!(
+        !repo
+            .git(&["status", "--porcelain"])
+            .stdout
+            .contains("README.md"),
+        "a dropped entry's change must not come back to the working tree"
+    );
+}
+
+#[test]
 fn undo_create_branch_deletes_it_and_switches_back_when_nothing_was_committed_on_it() {
     let repo = TestRepo::new();
     create_branch_sync(repo.path.clone(), "feature".to_string(), "main".to_string()).unwrap();
@@ -1508,6 +1597,46 @@ fn abort_rebase_restores_the_pre_rebase_state() {
         "abort should leave a clean working tree: {}",
         git_status.stdout
     );
+}
+
+// ===== diff_name_status =====
+
+#[test]
+fn diff_name_status_classifies_added_deleted_modified_and_renamed_files() {
+    let repo = TestRepo::new(); // starts with README.md = "hello\n"
+    repo.commit_new_file("modme.txt", "modme original\n", "add modme.txt");
+    repo.commit_new_file("deleteme.txt", "deleteme original\n", "add deleteme.txt");
+    let base = repo.git(&["rev-parse", "HEAD"]).stdout.trim().to_string();
+
+    repo.commit_new_file("new.txt", "brand new content\n", "add new.txt");
+    repo.write("modme.txt", "changed\n");
+    repo.git(&["commit", "-q", "-am", "modify modme.txt"]);
+    repo.git(&["rm", "-q", "deleteme.txt"]);
+    repo.git(&["commit", "-q", "-am", "delete deleteme.txt"]);
+    repo.git(&["mv", "README.md", "renamed.txt"]);
+    repo.git(&["commit", "-q", "-am", "rename README.md"]);
+
+    let mut files = diff_name_status_sync(repo.path.clone(), format!("{base}..HEAD")).unwrap();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+
+    assert_eq!(files.len(), 4, "{files:?}");
+    assert_eq!(files[0].path, "deleteme.txt");
+    assert_eq!(files[0].status, "deleted");
+    assert_eq!(files[1].path, "modme.txt");
+    assert_eq!(files[1].status, "modified");
+    assert_eq!(files[2].path, "new.txt");
+    assert_eq!(files[2].status, "added");
+    assert_eq!(files[3].path, "renamed.txt");
+    assert_eq!(files[3].status, "renamed");
+}
+
+#[test]
+fn diff_name_status_returns_empty_for_an_identical_range() {
+    let repo = TestRepo::new();
+    let head = repo.git(&["rev-parse", "HEAD"]).stdout.trim().to_string();
+
+    let files = diff_name_status_sync(repo.path.clone(), format!("{head}..{head}")).unwrap();
+    assert!(files.is_empty());
 }
 
 // ===== reset =====

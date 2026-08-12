@@ -211,6 +211,55 @@ export async function stashPop(repoPath: string): Promise<CommandResult> {
   return normalizeCommandResult(await invoke("stash_pop", { repoPath }));
 }
 
+// ===== stash list / selective restore =====
+
+export interface StashInfo {
+  stashRef: string;
+  message: string;
+  branch: string | null;
+  date: string;
+}
+
+export async function listStashes(repoPath: string): Promise<StashInfo[]> {
+  const raw: any[] = await invoke("list_stashes", { repoPath });
+  return raw.map((s) => ({ stashRef: s.stash_ref, message: s.message, branch: s.branch ?? null, date: s.date }));
+}
+
+export async function applyStash(repoPath: string, stashRef: string): Promise<CommandResult> {
+  return normalizeCommandResult(await invoke("apply_stash", { repoPath, stashRef }));
+}
+
+export async function popStash(repoPath: string, stashRef: string): Promise<CommandResult> {
+  return normalizeCommandResult(await invoke("pop_stash", { repoPath, stashRef }));
+}
+
+export async function dropStash(repoPath: string, stashRef: string): Promise<CommandResult> {
+  return normalizeCommandResult(await invoke("drop_stash", { repoPath, stashRef }));
+}
+
+// ===== undo history (persisted per-repo, in .git/) =====
+
+export interface UndoHistoryEntry {
+  id: string;
+  kind: string;
+  // opaque on purpose - whatever shape UndoAction (in App.tsx) serializes to
+  action: unknown;
+  label: string;
+  timestampMs: number;
+}
+
+export async function loadUndoHistory(repoPath: string): Promise<UndoHistoryEntry[]> {
+  const raw: any[] = await invoke("load_undo_history", { repoPath });
+  return raw.map((e) => ({ id: e.id, kind: e.kind, action: e.action, label: e.label, timestampMs: e.timestamp_ms }));
+}
+
+export async function saveUndoHistory(repoPath: string, entries: UndoHistoryEntry[]): Promise<void> {
+  await invoke("save_undo_history", {
+    repoPath,
+    entries: entries.map((e) => ({ id: e.id, kind: e.kind, action: e.action, label: e.label, timestamp_ms: e.timestampMs })),
+  });
+}
+
 export async function uncommitTo(repoPath: string, targetHash: string): Promise<CommandResult> {
   return normalizeCommandResult(await invoke("uncommit_to", { repoPath, targetHash }));
 }
@@ -337,6 +386,17 @@ export async function continueRevert(repoPath: string): Promise<CommandResult> {
 
 export async function abortRevert(repoPath: string): Promise<void> {
   await invoke("abort_revert", { repoPath });
+}
+
+// ===== file change preview (reset / revert / merge / rebase) =====
+
+export interface FileChange {
+  path: string;
+  status: "added" | "deleted" | "modified" | "renamed";
+}
+
+export async function diffNameStatus(repoPath: string, range: string): Promise<FileChange[]> {
+  return invoke("diff_name_status", { repoPath, range });
 }
 
 // ===== reset =====

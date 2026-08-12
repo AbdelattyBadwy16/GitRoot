@@ -33,7 +33,7 @@ const dict = dictionary as unknown as Record<string, DictEntry>;
 
 export type CommandName = "pull" | "push" | "stash" | "commit";
 
-export type ActionKind = CommandName | "switchBranch" | "createBranch" | "revert" | "undo" | "merge" | "rebase" | "reset";
+export type ActionKind = CommandName | "switchBranch" | "createBranch" | "revert" | "undo" | "merge" | "rebase" | "reset" | "applyStash" | "popStash" | "dropStash";
 
 export type ResetMode = "soft" | "mixed" | "hard";
 
