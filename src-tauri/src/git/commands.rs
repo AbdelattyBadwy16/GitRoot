@@ -1444,25 +1444,30 @@ pub struct FileChange {
     pub status: String, // "added" | "deleted" | "modified" | "renamed"
 }
 
+// git's plain --name-status output quotes any path with non-ASCII bytes (or other "unusual"
+// characters) as a C-style escaped string - e.g. an arabic filename comes back as
+// "a file with spaces \330\271\330\261\330\250\331\212.txt" instead of the real UTF-8 name.
+// -z sides-steps that entirely: it disables path quoting and NUL-separates every token, so
+// this parses a flat stream of tokens instead of tab-separated lines.
 fn parse_name_status(stdout: &str) -> Vec<FileChange> {
+    let mut tokens = stdout.trim_end_matches('\0').split('\0');
     let mut files = Vec::new();
-    for line in stdout.lines() {
-        let mut parts = line.split('\t');
-        let code = match parts.next() {
-            Some(c) if !c.is_empty() => c,
-            _ => continue,
-        };
-        let status = match code.chars().next().unwrap_or(' ') {
+    while let Some(code) = tokens.next() {
+        if code.is_empty() {
+            continue;
+        }
+        let first = code.chars().next().unwrap_or(' ');
+        let status = match first {
             'A' => "added",
             'D' => "deleted",
-            'R' => "renamed",
+            'R' | 'C' => "renamed",
             _ => "modified",
         };
-        // renames are "R100\told\tnew" - we want the new path, which is the last field
-        let path = match parts.next_back() {
-            Some(p) => p,
-            None => continue,
-        };
+        // renames/copies are "R100\0old\0new\0" - two paths follow, we want the new one
+        if matches!(first, 'R' | 'C') && tokens.next().is_none() {
+            break;
+        }
+        let Some(path) = tokens.next() else { break };
         files.push(FileChange {
             path: path.to_string(),
             status: status.to_string(),
@@ -1479,7 +1484,7 @@ pub async fn diff_name_status(repo_path: String, range: String) -> Result<Vec<Fi
 }
 
 fn diff_name_status_sync(repo_path: String, range: String) -> Result<Vec<FileChange>, String> {
-    let out = run_git(&repo_path, &["diff", "--name-status", &range])?;
+    let out = run_git(&repo_path, &["diff", "--name-status", "-z", &range])?;
     if !out.success {
         return Err(out.stderr);
     }

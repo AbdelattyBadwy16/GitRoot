@@ -1235,6 +1235,106 @@ fn drop_stash_removes_only_the_targeted_entry() {
 }
 
 #[test]
+fn list_stashes_parses_a_custom_message_given_via_stash_push_dash_m() {
+    let repo = TestRepo::new();
+    repo.write("README.md", "hello\ncustom stash change\n");
+    repo.git(&["stash", "push", "-q", "-m", "my custom name"]);
+
+    let stashes = list_stashes_sync(repo.path.clone()).unwrap();
+    assert_eq!(stashes.len(), 1);
+    assert!(
+        stashes[0].message.contains("my custom name"),
+        "{}",
+        stashes[0].message
+    );
+    assert_eq!(stashes[0].branch.as_deref(), Some("main"));
+}
+
+#[test]
+fn drop_stash_fails_gracefully_for_an_out_of_range_ref_instead_of_panicking() {
+    let repo = TestRepo::new();
+    repo.write("README.md", "hello\nchanged\n");
+    assert!(stash_sync(repo.path.clone()).unwrap().success);
+
+    let result = drop_stash_sync(repo.path.clone(), "stash@{5}".to_string()).unwrap();
+    assert!(!result.success);
+    assert!(result.raw_stderr.is_some());
+    // the real entry must be untouched
+    assert_eq!(list_stashes_sync(repo.path.clone()).unwrap().len(), 1);
+}
+
+#[test]
+fn pop_stash_fails_gracefully_when_the_stash_list_is_empty() {
+    let repo = TestRepo::new();
+    let result = pop_stash_sync(repo.path.clone(), "stash@{0}".to_string()).unwrap();
+    assert!(!result.success);
+    assert!(result.raw_stderr.is_some());
+}
+
+#[test]
+fn apply_stash_fails_gracefully_instead_of_panicking_when_it_would_conflict() {
+    let repo = TestRepo::new();
+    repo.write("README.md", "hello\nstashed change\n");
+    assert!(stash_sync(repo.path.clone()).unwrap().success);
+    // make the working tree conflict with what the stash would restore
+    repo.write("README.md", "hello\na completely different local change\n");
+
+    let result = apply_stash_sync(repo.path.clone(), "stash@{0}".to_string()).unwrap();
+    assert!(
+        !result.success,
+        "a conflicting apply should not report success"
+    );
+    // and, critically, the stash entry must still be there - a failed apply must not
+    // silently lose the stashed work
+    assert_eq!(list_stashes_sync(repo.path.clone()).unwrap().len(), 1);
+}
+
+#[test]
+fn apply_stash_can_be_reapplied_since_it_does_not_consume_the_entry() {
+    let repo = TestRepo::new();
+    repo.write("README.md", "hello\nchanged\n");
+    assert!(stash_sync(repo.path.clone()).unwrap().success);
+
+    let first = apply_stash_sync(repo.path.clone(), "stash@{0}".to_string()).unwrap();
+    assert!(first.success, "{:?}", first.raw_stderr);
+    assert_eq!(
+        list_stashes_sync(repo.path.clone()).unwrap().len(),
+        1,
+        "apply must not consume the entry"
+    );
+
+    // undo the working tree change and re-apply the same still-present entry
+    repo.git(&["checkout", "--", "README.md"]);
+    let second = apply_stash_sync(repo.path.clone(), "stash@{0}".to_string()).unwrap();
+    assert!(second.success, "{:?}", second.raw_stderr);
+}
+
+#[test]
+fn stash_commands_reject_an_empty_ref_without_panicking() {
+    let repo = TestRepo::new();
+    repo.write("README.md", "hello\nchanged\n");
+    assert!(stash_sync(repo.path.clone()).unwrap().success);
+
+    assert!(
+        !apply_stash_sync(repo.path.clone(), "".to_string())
+            .unwrap()
+            .success
+    );
+    assert!(
+        !pop_stash_sync(repo.path.clone(), "".to_string())
+            .unwrap()
+            .success
+    );
+    assert!(
+        !drop_stash_sync(repo.path.clone(), "".to_string())
+            .unwrap()
+            .success
+    );
+    // none of the failed calls above should have touched the real entry
+    assert_eq!(list_stashes_sync(repo.path.clone()).unwrap().len(), 1);
+}
+
+#[test]
 fn undo_create_branch_deletes_it_and_switches_back_when_nothing_was_committed_on_it() {
     let repo = TestRepo::new();
     create_branch_sync(repo.path.clone(), "feature".to_string(), "main".to_string()).unwrap();
@@ -1637,6 +1737,54 @@ fn diff_name_status_returns_empty_for_an_identical_range() {
 
     let files = diff_name_status_sync(repo.path.clone(), format!("{head}..{head}")).unwrap();
     assert!(files.is_empty());
+}
+
+#[test]
+fn diff_name_status_errors_gracefully_on_a_nonexistent_ref_instead_of_panicking() {
+    let repo = TestRepo::new();
+    let head = repo.git(&["rev-parse", "HEAD"]).stdout.trim().to_string();
+
+    let result = diff_name_status_sync(repo.path.clone(), format!("{head}..totally-not-a-ref"));
+    assert!(result.is_err());
+}
+
+#[test]
+fn diff_name_status_errors_gracefully_on_an_empty_range_string() {
+    let repo = TestRepo::new();
+    let result = diff_name_status_sync(repo.path.clone(), "".to_string());
+    assert!(result.is_err());
+}
+
+#[test]
+fn diff_name_status_handles_a_file_that_was_both_renamed_and_modified() {
+    let repo = TestRepo::new();
+    repo.commit_new_file(
+        "orig.txt",
+        "line one\nline two\nline three\n",
+        "add orig.txt",
+    );
+    let base = repo.git(&["rev-parse", "HEAD"]).stdout.trim().to_string();
+
+    repo.git(&["mv", "orig.txt", "renamed.txt"]);
+    repo.write("renamed.txt", "line one\nline two CHANGED\nline three\n");
+    repo.git(&["commit", "-q", "-am", "rename and modify"]);
+
+    let files = diff_name_status_sync(repo.path.clone(), format!("{base}..HEAD")).unwrap();
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert_eq!(files[0].path, "renamed.txt");
+    assert_eq!(files[0].status, "renamed");
+}
+
+#[test]
+fn diff_name_status_handles_filenames_with_spaces_and_unicode() {
+    let repo = TestRepo::new();
+    let base = repo.git(&["rev-parse", "HEAD"]).stdout.trim().to_string();
+    repo.commit_new_file("a file with spaces عربي.txt", "1\n", "add a weird filename");
+
+    let files = diff_name_status_sync(repo.path.clone(), format!("{base}..HEAD")).unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, "a file with spaces عربي.txt");
+    assert_eq!(files[0].status, "added");
 }
 
 // ===== reset =====

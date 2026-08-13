@@ -231,8 +231,19 @@ export default function App() {
   const [undoHistory, setUndoHistory] = useState<UndoHistoryItem[]>([]);
   const [undoConfirmingId, setUndoConfirmingId] = useState<string | null>(null);
   const [undoHistoryOpen, setUndoHistoryOpen] = useState(false);
+  const undoHistoryRef = useRef<HTMLDivElement>(null);
   const lastUndo = undoHistory[0] ?? null;
   const undoConfirming = undoHistory.find((h) => h.id === undoConfirmingId) ?? null;
+
+  // close the history dropdown on an outside click, same pattern AccountSwitcher already uses
+  useEffect(() => {
+    if (!undoHistoryOpen) return;
+    function onDocClick(e: MouseEvent) {
+      if (undoHistoryRef.current && !undoHistoryRef.current.contains(e.target as Node)) setUndoHistoryOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [undoHistoryOpen]);
 
   function pushUndoHistory(action: UndoAction) {
     if (!repo) return;
@@ -267,16 +278,21 @@ export default function App() {
   // only one of those dialogs is ever open at once, so a single slot is enough
   const [previewFiles, setPreviewFiles] = useState<FileChange[] | null>(null);
   const [previewFilesLoading, setPreviewFilesLoading] = useState(false);
+  // guards against a slow, stale fetch (e.g. from a dialog the user already cancelled)
+  // resolving after a newer one and clobbering it with out-of-date files
+  const previewFilesRequestId = useRef(0);
 
   async function loadPreviewFiles(repoPath: string, range: string) {
+    const requestId = ++previewFilesRequestId.current;
     setPreviewFiles(null);
     setPreviewFilesLoading(true);
     try {
-      setPreviewFiles(await diffNameStatus(repoPath, range));
+      const files = await diffNameStatus(repoPath, range);
+      if (requestId === previewFilesRequestId.current) setPreviewFiles(files);
     } catch {
-      setPreviewFiles([]);
+      if (requestId === previewFilesRequestId.current) setPreviewFiles([]);
     } finally {
-      setPreviewFilesLoading(false);
+      if (requestId === previewFilesRequestId.current) setPreviewFilesLoading(false);
     }
   }
 
@@ -933,7 +949,7 @@ export default function App() {
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 4 }}>
+          <div ref={undoHistoryRef} style={{ position: "relative", display: "flex", alignItems: "center", gap: 4 }}>
             <AnimatePresence>
               {(lastUndo || touring) && (
                 <motion.button
