@@ -138,4 +138,56 @@ mod tests {
         assert!(loaded.is_empty());
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn load_returns_empty_for_a_path_that_does_not_exist_at_all_instead_of_erroring() {
+        let bogus = std::env::temp_dir().join("gitroot-undo-history-does-not-exist-at-all");
+        let history = load_undo_history_sync(bogus.to_string_lossy().to_string()).unwrap();
+        assert!(history.is_empty());
+    }
+
+    #[test]
+    fn save_fails_gracefully_instead_of_panicking_when_the_git_dir_does_not_exist() {
+        // a plain directory with no .git subfolder at all - not a real repo
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("gitroot-undo-history-no-git-{n}"));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let result =
+            save_undo_history_sync(dir.to_string_lossy().to_string(), vec![sample_entry("a")]);
+        assert!(
+            result.is_err(),
+            "writing into a missing .git dir should error, not panic"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn load_returns_an_error_instead_of_panicking_on_corrupted_json() {
+        let dir = temp_repo_dir();
+        std::fs::write(
+            dir.join(".git").join(HISTORY_FILE_NAME),
+            "{ not valid json ][",
+        )
+        .unwrap();
+
+        let result = load_undo_history_sync(dir.to_string_lossy().to_string());
+        assert!(result.is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn round_trips_unicode_and_quote_heavy_labels() {
+        let dir = temp_repo_dir();
+        let repo_path = dir.to_string_lossy().to_string();
+        let mut entry = sample_entry("a");
+        entry.label = "undo revert \"fix: عربي 你好\" 🎉".to_string();
+
+        save_undo_history_sync(repo_path.clone(), vec![entry]).unwrap();
+        let loaded = load_undo_history_sync(repo_path).unwrap();
+
+        assert_eq!(loaded[0].label, "undo revert \"fix: عربي 你好\" 🎉");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
