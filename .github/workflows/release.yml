@@ -1,0 +1,74 @@
+name: Release
+
+# bump the version in src-tauri/tauri.conf.json (and Cargo.toml/package.json to match) before
+# tagging - tagName/releaseName below pull __VERSION__ straight from tauri.conf.json, so
+# whichever version is committed there is what the release ends up named as, on both triggers
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+          # 22.04 specifically, not -latest - keeps the glibc version this links against
+          # older/broader, so the .deb/.AppImage stay installable on older distros too
+          - platform: ubuntu-22.04
+            args: ""
+          - platform: windows-latest
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # need this to build tauri app on linux (same list as ci.yml)
+      - name: install Tauri Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            patchelf \
+            build-essential
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # macOS needs both architectures installed to produce a universal binary
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "GitRoot v__VERSION__"
+          # lands as a draft so it can be reviewed/edited before publishing, not live the
+          # instant the build finishes
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
