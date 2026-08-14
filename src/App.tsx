@@ -17,6 +17,7 @@ import GitIdentityPrompt from "./components/GitIdentityPrompt";
 import AccountSwitcher from "./components/AccountSwitcher";
 import TourOverlay from "./components/TourOverlay";
 import WelcomeTourPrompt from "./components/WelcomeTourPrompt";
+import AccountPrompt from "./components/AccountPrompt";
 import TabBar, { type Tab } from "./components/TabBar";
 import BranchStatusBadge from "./components/BranchStatusBadge";
 import LearningModeToggle from "./components/LearningModeToggle";
@@ -73,6 +74,7 @@ import { usePausedOp } from "./hooks/usePausedOp";
 import { useStashActions } from "./hooks/useStashActions";
 import { useMergeRebase } from "./hooks/useMergeRebase";
 import { useResetRevert } from "./hooks/useResetRevert";
+import { useAccountPrompt } from "./hooks/useAccountPrompt";
 
 const EMPTY_GRAPH: CommitGraphData = { commits: [], edges: [], laneCount: 0, hasMore: false };
 const GRAPH_PAGE_SIZE = 30;
@@ -212,6 +214,8 @@ export default function App() {
     confirmResetDiscard,
   } = useResetRevert({ repo, setBusy, applyResult, refresh, pulseHead, recordUndo, setLastAction, setPausedOp, loadPreviewFiles, setPreviewFiles });
 
+  const { showAccountPrompt, dismiss: dismissAccountPrompt, checkAfterOpen, accountSwitcherOpen, setAccountSwitcherOpen, openFullSwitcher } = useAccountPrompt();
+
   function refreshGitIdentity() {
     if (!repo) return;
     checkGitIdentity(repo.path)
@@ -233,7 +237,10 @@ export default function App() {
     setPreviewFiles(null);
     await refresh(info.path, GRAPH_PAGE_SIZE);
     checkGitIdentity(info.path)
-      .then(setGitIdentity)
+      .then((identity) => {
+        setGitIdentity(identity);
+        checkAfterOpen(identity);
+      })
       .catch(() => setGitIdentity(null));
     if (!(await checkTourOffered())) {
       await markTourOffered();
@@ -642,7 +649,13 @@ export default function App() {
             switch repo
           </button>
           <div data-tour="account-switcher">
-            <AccountSwitcher repoPath={repo.path} identity={gitIdentity ?? { name: null, email: null }} onIdentityChanged={refreshGitIdentity} />
+            <AccountSwitcher
+              repoPath={repo.path}
+              identity={gitIdentity ?? { name: null, email: null }}
+              onIdentityChanged={refreshGitIdentity}
+              open={accountSwitcherOpen}
+              onOpenChange={setAccountSwitcherOpen}
+            />
           </div>
         </div>
       </header>
@@ -901,6 +914,18 @@ export default function App() {
               tourGoTo(0);
             }}
             onSkip={() => setShowTourPrompt(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showAccountPrompt && repo && gitIdentity && (
+          <AccountPrompt
+            repoPath={repo.path}
+            identity={gitIdentity}
+            onIdentityChanged={refreshGitIdentity}
+            onDismiss={dismissAccountPrompt}
+            onManageAccounts={openFullSwitcher}
           />
         )}
       </AnimatePresence>
