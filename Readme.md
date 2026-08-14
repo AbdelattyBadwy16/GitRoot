@@ -14,6 +14,33 @@ commands from buttons, seeing an interactive commit graph, and getting a
 plain-language explanation after each action. No AI assistant yet —
 natural language commands are v2 (see [section 4](#4-scope)).
 
+## Installing
+
+Grab the latest build from the [Releases page](https://github.com/AbdelattyBadwy16/GitRoot/releases/latest) — pick the file for your OS.
+
+Builds aren't code-signed yet (that costs money — see below), so your OS
+will show a security warning the first time you open one. That's expected,
+not a sign anything's wrong — the source is right here if you'd rather
+check it yourself before trusting it.
+
+**macOS** — you'll see *"Apple could not verify 'gitroot' is free of
+malware..."*. Either:
+- Terminal: `xattr -cr /path/to/gitroot.app`, then open it normally, **or**
+- System Settings → Privacy & Security → scroll down to the blocked-app
+  notice → **Open Anyway**
+
+**Windows** — you'll see a blue *"Windows protected your PC"* SmartScreen
+screen. Click **More info**, then **Run anyway**. This goes away on its
+own once enough people have downloaded that build without issues.
+
+**Linux** — no equivalent OS-level warning. For the `.AppImage`, make it
+executable first: `chmod +x gitroot*.AppImage`, then run it directly. The
+`.deb` installs normally via `dpkg -i` or your distro's software center.
+
+*(Planning to sign the Windows build for free via [SignPath](https://signpath.io)'s
+open-source program. macOS notarization needs a paid Apple Developer
+account — $99/yr — not set up yet.)*
+
 ## 2. How it works
 
 ### 2.1 Getting started
