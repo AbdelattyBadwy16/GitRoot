@@ -2,24 +2,25 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { AnimatePresence, motion } from "framer-motion";
 import { setGitIdentity, type GitIdentity } from "../lib/gitCommands";
 import { avatarUrl, loadProfiles, saveProfiles, newProfileId, type GitProfile } from "../lib/profiles";
+import { useProfileSwitch } from "../hooks/useProfileSwitch";
 
 interface AccountSwitcherProps {
   repoPath: string;
   identity: GitIdentity;
   onIdentityChanged: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
 type FormState = { label: string; name: string; email: string; githubUsername: string };
 const EMPTY_FORM: FormState = { label: "", name: "", email: "", githubUsername: "" };
 
-export default function AccountSwitcher({ repoPath, identity, onIdentityChanged }: AccountSwitcherProps) {
+export default function AccountSwitcher({ repoPath, identity, onIdentityChanged, open, onOpenChange }: AccountSwitcherProps) {
   const [profiles, setProfiles] = useState<GitProfile[]>(loadProfiles);
-  const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"list" | "add" | "edit">("list");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
-  const [switchingId, setSwitchingId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { switchingId, error, setError, switchTo } = useProfileSwitch(repoPath, onIdentityChanged);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const activeProfile = profiles.find((p) => p.name === identity.name && p.email === identity.email) ?? null;
@@ -31,7 +32,7 @@ export default function AccountSwitcher({ repoPath, identity, onIdentityChanged 
   }
 
   function closeAndReset() {
-    setOpen(false);
+    onOpenChange(false);
     setMode("list");
     setEditingId(null);
     setForm(EMPTY_FORM);
@@ -46,21 +47,6 @@ export default function AccountSwitcher({ repoPath, identity, onIdentityChanged 
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [open]);
-
-  async function switchTo(profile: GitProfile) {
-    if (switchingId) return;
-    setSwitchingId(profile.id);
-    setError(null);
-    try {
-      await setGitIdentity(repoPath, profile.name, profile.email);
-      onIdentityChanged();
-      closeAndReset();
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setSwitchingId(null);
-    }
-  }
 
   function startAdd(prefill?: Partial<FormState>) {
     setForm({ ...EMPTY_FORM, name: identity.name ?? "", email: identity.email ?? "", ...prefill });
@@ -112,7 +98,7 @@ export default function AccountSwitcher({ repoPath, identity, onIdentityChanged 
   return (
     <div ref={containerRef} style={{ position: "relative" }}>
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => onOpenChange(!open)}
         title={buttonTitle}
         style={{
           display: "flex",
@@ -187,7 +173,7 @@ export default function AccountSwitcher({ repoPath, identity, onIdentityChanged 
                         }}
                       >
                         <button
-                          onClick={() => !isActive && switchTo(p)}
+                          onClick={() => !isActive && switchTo(p, closeAndReset)}
                           disabled={!!switchingId}
                           style={{
                             flex: 1,
