@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import CommitGraph, { type CommitActionContext } from "./components/CommitGraph";
+import CommitGraph from "./components/CommitGraph";
 import CommitRangeSummary from "./components/CommitRangeSummary";
 import FileChangesList from "./components/FileChangesList";
 import PreviewTabs from "./components/PreviewTabs";
@@ -31,57 +31,25 @@ import {
   pull,
   push,
   stash,
-  stashPop,
   commit as commitFn,
-  uncommitTo,
-  hardResetTo,
   getStatus,
   stageFile,
   unstageFile,
   getCommitGraph,
   getRepoFingerprint,
   listBranches,
-  switchBranch,
-  createBranch,
-  undoCreateBranch,
-  revertToCommit,
-  continueRevert,
-  abortRevert,
-  resetPreflight,
-  resetToCommit,
+  listStashes,
   pickFolder,
   checkGitAvailable,
   checkGitIdentity,
   checkTourOffered,
   markTourOffered,
-  mergePreview,
-  mergeBranch,
-  continueMerge,
-  abortMerge,
-  rebasePreflight,
-  rebaseBranch,
-  getRebaseStatus,
-  continueRebase,
-  abortRebase,
-  diffNameStatus,
-  listStashes,
-  applyStash,
-  popStash,
-  dropStash,
-  loadUndoHistory,
-  saveUndoHistory,
-  withTarget,
   type RepoInfo,
   type FileStatus,
   type CommitGraphData,
   type BranchInfo,
   type CommandResult,
   type GitIdentity,
-  type MergePreview,
-  type RebasePreflight,
-  type ResetPreflight,
-  type ResetMode,
-  type FileChange,
   type StashInfo,
 } from "./lib/gitCommands";
 import {
@@ -97,18 +65,14 @@ import {
 } from "./lib/explain";
 import { isHead } from "./lib/graph";
 import { loadLearningMode, saveLearningMode } from "./lib/learningMode";
-import {
-  UNDO_LABEL,
-  MAX_UNDO_HISTORY,
-  undoConfirmText,
-  computeUndo,
-  genId,
-  toPersistedEntry,
-  fromPersistedEntry,
-  relativeTime,
-  type UndoAction,
-  type UndoHistoryItem,
-} from "./lib/undo";
+import { UNDO_LABEL, computeUndo, undoConfirmText, relativeTime } from "./lib/undo";
+import { usePreviewFiles } from "./hooks/usePreviewFiles";
+import { useUndoHistory } from "./hooks/useUndoHistory";
+import { useBranches } from "./hooks/useBranches";
+import { usePausedOp } from "./hooks/usePausedOp";
+import { useStashActions } from "./hooks/useStashActions";
+import { useMergeRebase } from "./hooks/useMergeRebase";
+import { useResetRevert } from "./hooks/useResetRevert";
 
 const EMPTY_GRAPH: CommitGraphData = { commits: [], edges: [], laneCount: 0, hasMore: false };
 const GRAPH_PAGE_SIZE = 30;
@@ -127,46 +91,7 @@ export default function App() {
   const [learningMode, setLearningMode] = useState(loadLearningMode);
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [stashes, setStashes] = useState<StashInfo[]>([]);
-  const [dropStashTarget, setDropStashTarget] = useState<StashInfo | null>(null);
-  const [revertTarget, setRevertTarget] = useState<CommitActionContext | null>(null);
   const [hunkEditorFile, setHunkEditorFile] = useState<string | null>(null);
-  const [undoHistory, setUndoHistory] = useState<UndoHistoryItem[]>([]);
-  const [undoConfirmingId, setUndoConfirmingId] = useState<string | null>(null);
-  const [undoHistoryOpen, setUndoHistoryOpen] = useState(false);
-  const undoHistoryRef = useRef<HTMLDivElement>(null);
-  const lastUndo = undoHistory[0] ?? null;
-  const undoConfirming = undoHistory.find((h) => h.id === undoConfirmingId) ?? null;
-
-  // close the history dropdown on an outside click, same pattern AccountSwitcher already uses
-  useEffect(() => {
-    if (!undoHistoryOpen) return;
-    function onDocClick(e: MouseEvent) {
-      if (undoHistoryRef.current && !undoHistoryRef.current.contains(e.target as Node)) setUndoHistoryOpen(false);
-    }
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, [undoHistoryOpen]);
-
-  function pushUndoHistory(action: UndoAction) {
-    if (!repo) return;
-    const next = [{ id: genId(), action, timestampMs: Date.now() }, ...undoHistory].slice(0, MAX_UNDO_HISTORY);
-    setUndoHistory(next);
-    saveUndoHistory(repo.path, next.map(toPersistedEntry)).catch(() => {});
-  }
-
-  // most call sites just have a raw UndoAction | null from computeUndo - this is the
-  // "record it if there's anything to record" shortcut for those
-  function recordUndo(action: UndoAction | null) {
-    if (action) pushUndoHistory(action);
-  }
-
-  function removeUndoHistoryEntry(id: string) {
-    setUndoHistory((prev) => {
-      const next = prev.filter((h) => h.id !== id);
-      if (repo) saveUndoHistory(repo.path, next.map(toPersistedEntry)).catch(() => {});
-      return next;
-    });
-  }
   const [gitAvailable, setGitAvailable] = useState<boolean | null>(null);
   const [gitIdentity, setGitIdentity] = useState<GitIdentity | null>(null);
   const [showTourPrompt, setShowTourPrompt] = useState(false);
@@ -175,57 +100,6 @@ export default function App() {
   // merge/rebase pickers with only one branch) force-show a preview instead, so the tour always
   // has something real to point at
   const touring = tourStep !== null;
-
-  // file-level "what will change" preview shared by reset/revert/merge/rebase dialogs -
-  // only one of those dialogs is ever open at once, so a single slot is enough
-  const [previewFiles, setPreviewFiles] = useState<FileChange[] | null>(null);
-  const [previewFilesLoading, setPreviewFilesLoading] = useState(false);
-  // guards against a slow, stale fetch (e.g. from a dialog the user already cancelled)
-  // resolving after a newer one and clobbering it with out-of-date files
-  const previewFilesRequestId = useRef(0);
-
-  async function loadPreviewFiles(repoPath: string, range: string) {
-    const requestId = ++previewFilesRequestId.current;
-    setPreviewFiles(null);
-    setPreviewFilesLoading(true);
-    try {
-      const files = await diffNameStatus(repoPath, range);
-      if (requestId === previewFilesRequestId.current) setPreviewFiles(files);
-    } catch {
-      if (requestId === previewFilesRequestId.current) setPreviewFiles([]);
-    } finally {
-      if (requestId === previewFilesRequestId.current) setPreviewFilesLoading(false);
-    }
-  }
-
-  const [mergeConfirm, setMergeConfirm] = useState<{ target: string; preview: MergePreview } | null>(null);
-  const [rebaseFlow, setRebaseFlow] = useState<{ step: "warning" | "plan"; target: string; preflight: RebasePreflight } | null>(null);
-  const [rebaseProgress, setRebaseProgress] = useState<{ current: number; total: number } | null>(null);
-  const [pausedOp, setPausedOp] = useState<{ kind: "merge" | "rebase" | "revert"; target: string } | null>(null);
-  const [resetFlow, setResetFlow] = useState<{
-    context: CommitActionContext;
-    preflight: ResetPreflight;
-    step: "warning" | "picker" | "confirmDiscard";
-    mode: ResetMode;
-  } | null>(null);
-
-  useEffect(() => {
-    checkGitAvailable()
-      .then((info) => setGitAvailable(info.available))
-      .catch(() => setGitAvailable(false));
-    // the tour-offered flag moved from localStorage to a file on disk (see checkTourOffered) -
-    // clean up both old keys, they're unused now
-    localStorage.removeItem("gitroot:tourOffered");
-    localStorage.removeItem("gitroot:tourOffered:v2");
-  }, []);
-
-  useEffect(() => {
-    saveLearningMode(learningMode);
-  }, [learningMode]);
-
-  useEffect(() => {
-    if (activeTab !== "commit") setHunkEditorFile(null);
-  }, [activeTab]);
 
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
@@ -263,41 +137,6 @@ export default function App() {
     }
   }
 
-  const busyRef = useRef(busy);
-  useEffect(() => {
-    busyRef.current = busy;
-  }, [busy]);
-  const refreshRef = useRef(refresh);
-  useEffect(() => {
-    refreshRef.current = refresh;
-  });
-
-  useEffect(() => {
-    if (!repo) return;
-    let lastFingerprint: string | null = null;
-    const path = repo.path;
-
-    const tick = async () => {
-      let fp: string;
-      try {
-        fp = await getRepoFingerprint(path);
-      } catch {
-        return;
-      }
-      if (lastFingerprint === null) {
-        lastFingerprint = fp;
-        return;
-      }
-      if (fp !== lastFingerprint) {
-        lastFingerprint = fp;
-        if (busyRef.current === null) await refreshRef.current(path);
-      }
-    };
-
-    const interval = window.setInterval(tick, 1500);
-    return () => window.clearInterval(interval);
-  }, [repo]);
-
   function pulseHead(g: CommitGraphData) {
     const head = g.commits.find(isHead);
     if (!head) return;
@@ -311,6 +150,68 @@ export default function App() {
     return details;
   }
 
+  const { previewFiles, previewFilesLoading, loadPreviewFiles, setPreviewFiles } = usePreviewFiles();
+
+  const {
+    undoHistory,
+    setUndoConfirmingId,
+    undoHistoryOpen,
+    setUndoHistoryOpen,
+    undoHistoryRef,
+    lastUndo,
+    undoConfirming,
+    recordUndo,
+    handleUndo,
+  } = useUndoHistory({ repo, setBusy, applyResult, refresh, pulseHead });
+
+  const { handleSwitchBranch, handleCreateBranch } = useBranches({ repo, setBusy, applyResult, refresh, pulseHead, recordUndo, setLastAction });
+
+  const { pausedOp, setPausedOp, handleContinuePausedOp, handleAbortPausedOp } = usePausedOp({
+    repo,
+    setBusy,
+    applyResult,
+    refresh,
+    pulseHead,
+    recordUndo,
+    setLastAction,
+  });
+
+  const { dropStashTarget, setDropStashTarget, handleApplyStash, handlePopStash, confirmDropStash } = useStashActions({
+    repo,
+    setBusy,
+    applyResult,
+    refresh,
+    pulseHead,
+    recordUndo,
+    setLastAction,
+  });
+
+  const {
+    mergeConfirm,
+    setMergeConfirm,
+    rebaseFlow,
+    setRebaseFlow,
+    rebaseProgress,
+    setRebaseProgress,
+    handlePickMergeTarget,
+    confirmMerge,
+    handlePickRebaseTarget,
+    confirmRebaseWarning,
+    confirmRebasePlan,
+  } = useMergeRebase({ repo, setBusy, applyResult, refresh, pulseHead, recordUndo, setLastAction, setPausedOp, loadPreviewFiles, setPreviewFiles });
+
+  const {
+    revertTarget,
+    setRevertTarget,
+    resetFlow,
+    setResetFlow,
+    confirmRevert,
+    handlePickCommitAction,
+    confirmResetWarning,
+    confirmResetPicker,
+    confirmResetDiscard,
+  } = useResetRevert({ repo, setBusy, applyResult, refresh, pulseHead, recordUndo, setLastAction, setPausedOp, loadPreviewFiles, setPreviewFiles });
+
   function refreshGitIdentity() {
     if (!repo) return;
     checkGitIdentity(repo.path)
@@ -323,12 +224,6 @@ export default function App() {
     setGraphLimit(GRAPH_PAGE_SIZE);
     setActiveTab("graph");
     setHunkEditorFile(null);
-    // undo history is scoped per-repo and persisted in that repo's own .git dir, so switching
-    // repos means loading whatever history that repo already has, not clearing to empty
-    setUndoHistory([]);
-    loadUndoHistory(info.path)
-      .then((entries) => setUndoHistory(entries.map(fromPersistedEntry)))
-      .catch(() => setUndoHistory([]));
     // clear this so it does not poll or act on the wrong repo after switching
     setMergeConfirm(null);
     setRebaseFlow(null);
@@ -463,312 +358,58 @@ export default function App() {
     }
   }
 
-  async function handleSwitchBranch(name: string) {
+  useEffect(() => {
+    checkGitAvailable()
+      .then((info) => setGitAvailable(info.available))
+      .catch(() => setGitAvailable(false));
+    // the tour-offered flag moved from localStorage to a file on disk (see checkTourOffered) -
+    // clean up both old keys, they're unused now
+    localStorage.removeItem("gitroot:tourOffered");
+    localStorage.removeItem("gitroot:tourOffered:v2");
+  }, []);
+
+  useEffect(() => {
+    saveLearningMode(learningMode);
+  }, [learningMode]);
+
+  useEffect(() => {
+    if (activeTab !== "commit") setHunkEditorFile(null);
+  }, [activeTab]);
+
+  const busyRef = useRef(busy);
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
+  const refreshRef = useRef(refresh);
+  useEffect(() => {
+    refreshRef.current = refresh;
+  });
+
+  useEffect(() => {
     if (!repo) return;
-    setBusy("switchBranch");
-    try {
-      const result = await switchBranch(repo.path, name);
-      const details = applyResult("switchBranch", result);
-      if (!details.isError) recordUndo(computeUndo("switchBranch", result));
-      const g = await refresh(repo.path);
-      if (!details.isError) pulseHead(g);
-    } finally {
-      setBusy(null);
-    }
-  }
+    let lastFingerprint: string | null = null;
+    const path = repo.path;
 
-  async function handleCreateBranch(name: string, startPoint: string) {
-    if (!repo) return;
-    setBusy("createBranch");
-    try {
-      const result = await createBranch(repo.path, name, startPoint);
-      const details = applyResult("createBranch", result);
-      if (!details.isError) recordUndo(computeUndo("createBranch", result));
-      const g = await refresh(repo.path);
-      if (!details.isError) pulseHead(g);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handleApplyStash(stash: StashInfo) {
-    if (!repo) return;
-    setBusy("applyStash");
-    try {
-      const result = await applyStash(repo.path, stash.stashRef);
-      // withTarget so the result text can name which stash this was ({target}), not just
-      // say "applied the stash" - the backend only knows the ref, the frontend already has
-      // the human message right here
-      applyResult("applyStash", withTarget(result, stash.message));
-      await refresh(repo.path);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handlePopStash(stash: StashInfo) {
-    if (!repo) return;
-    setBusy("popStash");
-    try {
-      const result = await popStash(repo.path, stash.stashRef);
-      applyResult("popStash", withTarget(result, stash.message));
-      await refresh(repo.path);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function confirmDropStash() {
-    if (!repo || !dropStashTarget) return;
-    const stash = dropStashTarget;
-    setDropStashTarget(null);
-    setBusy("dropStash");
-    try {
-      const result = await dropStash(repo.path, stash.stashRef);
-      applyResult("dropStash", withTarget(result, stash.message));
-      await refresh(repo.path);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handlePickMergeTarget(target: string) {
-    if (!repo) return;
-    const preview = await mergePreview(repo.path, target);
-    setMergeConfirm({ target, preview });
-    loadPreviewFiles(repo.path, `HEAD...${target}`);
-  }
-
-  async function confirmMerge() {
-    if (!repo || !mergeConfirm) return;
-    const target = mergeConfirm.target;
-    setMergeConfirm(null);
-    setPreviewFiles(null);
-    setBusy("merge");
-    try {
-      const result = await mergeBranch(repo.path, target);
-      if (result.conflict) {
-        setPausedOp({ kind: "merge", target });
-        setLastAction(explainDetails("merge", result));
-        await refresh(repo.path);
-        return;
-      }
-      const details = applyResult("merge", result);
-      const g = await refresh(repo.path);
-      if (!details.isError) pulseHead(g);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handlePickRebaseTarget(target: string) {
-    if (!repo) return;
-    const preflight = await rebasePreflight(repo.path, target);
-    setRebaseFlow({ step: preflight.alreadyPushedCount > 0 ? "warning" : "plan", target, preflight });
-    loadPreviewFiles(repo.path, `${target}...HEAD`);
-  }
-
-  function confirmRebaseWarning() {
-    if (!rebaseFlow) return;
-    setRebaseFlow({ ...rebaseFlow, step: "plan" });
-  }
-
-  async function confirmRebasePlan() {
-    if (!repo || !rebaseFlow) return;
-    const target = rebaseFlow.target;
-    setRebaseFlow(null);
-    setPreviewFiles(null);
-    setBusy("rebase");
-    const poll = window.setInterval(async () => {
+    const tick = async () => {
+      let fp: string;
       try {
-        const status = await getRebaseStatus(repo.path);
-        setRebaseProgress(status.inProgress ? { current: status.current, total: status.total } : null);
+        fp = await getRepoFingerprint(path);
       } catch {
-      }
-    }, 300);
-    try {
-      const result = await rebaseBranch(repo.path, target);
-      if (result.conflict) {
-        setPausedOp({ kind: "rebase", target });
-        setLastAction(explainDetails("rebase", result));
-        await refresh(repo.path);
         return;
       }
-      const details = applyResult("rebase", result);
-      const g = await refresh(repo.path);
-      if (!details.isError) pulseHead(g);
-    } finally {
-      window.clearInterval(poll);
-      setRebaseProgress(null);
-      setBusy(null);
-    }
-  }
-
-  async function handleContinuePausedOp() {
-    if (!repo || !pausedOp) return;
-    setBusy("conflictContinue");
-    try {
-      const raw =
-        pausedOp.kind === "merge"
-          ? await continueMerge(repo.path)
-          : pausedOp.kind === "rebase"
-          ? await continueRebase(repo.path)
-          : await continueRevert(repo.path);
-      const result = withTarget(raw, pausedOp.target);
-      if (result.conflict) {
-        setLastAction(explainDetails(pausedOp.kind, result));
+      if (lastFingerprint === null) {
+        lastFingerprint = fp;
         return;
       }
-      setPausedOp(null);
-      const details = applyResult(pausedOp.kind, result);
-      if (!details.isError && pausedOp.kind === "revert") recordUndo(computeUndo("revert", result));
-      const g = await refresh(repo.path);
-      if (!details.isError) pulseHead(g);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handleAbortPausedOp() {
-    if (!repo || !pausedOp) return;
-    setBusy("conflictAbort");
-    try {
-      if (pausedOp.kind === "merge") await abortMerge(repo.path);
-      else if (pausedOp.kind === "rebase") await abortRebase(repo.path);
-      else await abortRevert(repo.path);
-      setPausedOp(null);
-      setLastAction(null);
-      await refresh(repo.path);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function confirmRevert() {
-    if (!repo || !revertTarget) return;
-    const target = revertTarget.target.hash;
-    setRevertTarget(null);
-    setPreviewFiles(null);
-    setBusy("revert");
-    try {
-      const result = await revertToCommit(repo.path, target);
-      if (result.conflict) {
-        setPausedOp({ kind: "revert", target });
-        setLastAction(explainDetails("revert", result));
-        await refresh(repo.path);
-        return;
+      if (fp !== lastFingerprint) {
+        lastFingerprint = fp;
+        if (busyRef.current === null) await refreshRef.current(path);
       }
-      const details = applyResult("revert", result);
-      if (!details.isError) recordUndo(computeUndo("revert", result));
-      const g = await refresh(repo.path);
-      if (!details.isError) pulseHead(g);
-    } finally {
-      setBusy(null);
-    }
-  }
+    };
 
-  async function handlePickCommitAction(kind: "reset" | "revert", context: CommitActionContext) {
-    if (!repo) return;
-    const range = `${context.target.hash}..${context.head.hash}`;
-    if (kind === "revert") {
-      setRevertTarget(context);
-      loadPreviewFiles(repo.path, range);
-      return;
-    }
-    const preflight = await resetPreflight(repo.path, context.target.hash);
-    setResetFlow({
-      context,
-      preflight,
-      step: preflight.alreadyPushedCount > 0 ? "warning" : "picker",
-      mode: "mixed",
-    });
-    loadPreviewFiles(repo.path, range);
-  }
-
-  function confirmResetWarning() {
-    setResetFlow((rf) => (rf ? { ...rf, step: "picker" } : rf));
-  }
-
-  function confirmResetPicker() {
-    if (!resetFlow) return;
-    if (resetFlow.mode === "hard") {
-      setResetFlow({ ...resetFlow, step: "confirmDiscard" });
-      return;
-    }
-    executeReset(resetFlow.mode);
-  }
-
-  function confirmResetDiscard() {
-    executeReset("hard");
-  }
-
-  async function executeReset(mode: ResetMode) {
-    if (!repo || !resetFlow) return;
-    const target = resetFlow.context.target.hash;
-    setBusy("reset");
-    try {
-      const result = await resetToCommit(repo.path, target, mode);
-      const details = applyResult("reset", result);
-      if (!details.isError) recordUndo(computeUndo("reset", result));
-      setResetFlow(null);
-      setPreviewFiles(null);
-      const g = await refresh(repo.path);
-      if (!details.isError) pulseHead(g);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  // undoes one specific entry from the history, not necessarily the most recent - each entry
-  // just replays its own reverse command against the repo's current state, independent of
-  // whatever else has happened since (git has no real transactional undo; this is the same
-  // limitation that already existed for "undo last action", just no longer hidden behind it
-  // always being the most recent thing)
-  async function handleUndo(entryId: string) {
-    const entry = undoHistory.find((h) => h.id === entryId);
-    if (!repo || !entry) return;
-    const action = entry.action;
-    setBusy("undo");
-    try {
-      let result: CommandResult;
-      switch (action.kind) {
-        case "pull":
-        case "reset":
-          result = await hardResetTo(repo.path, action.targetHash);
-          break;
-        case "commit":
-        case "revert":
-          result = await uncommitTo(repo.path, action.targetHash);
-          break;
-        case "stash":
-          result = await stashPop(repo.path);
-          break;
-        case "switchBranch":
-          result = await switchBranch(repo.path, action.targetBranch);
-          break;
-        case "createBranch":
-          result = await undoCreateBranch(repo.path, action.name, action.startPoint);
-          break;
-        case "push": {
-          removeUndoHistoryEntry(entryId); // not safe to just retry this if it fail halfway
-          const revertResult = await revertToCommit(repo.path, action.targetHash);
-          if (!revertResult.success) {
-            result = revertResult;
-            break;
-          }
-          const pushResult = await push(repo.path);
-          result = { ...pushResult, command: `${revertResult.command} && ${pushResult.command}` };
-          break;
-        }
-      }
-      const details = applyResult("undo", result);
-      if (!details.isError) removeUndoHistoryEntry(entryId);
-      const g = await refresh(repo.path);
-      if (!details.isError) pulseHead(g);
-    } finally {
-      setBusy(null);
-    }
-  }
+    const interval = window.setInterval(tick, 1500);
+    return () => window.clearInterval(interval);
+  }, [repo]);
 
   if (gitAvailable === null) return null;
   if (gitAvailable === false) {
@@ -1285,4 +926,3 @@ function UndoIcon() {
     </svg>
   );
 }
-
