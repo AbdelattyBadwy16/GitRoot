@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import CommitGraph, { type CommitActionContext } from "./components/CommitGraph";
+import CommitGraph from "./components/CommitGraph";
 import CommitRangeSummary from "./components/CommitRangeSummary";
 import FileChangesList from "./components/FileChangesList";
 import PreviewTabs from "./components/PreviewTabs";
@@ -17,8 +17,12 @@ import GitIdentityPrompt from "./components/GitIdentityPrompt";
 import AccountSwitcher from "./components/AccountSwitcher";
 import TourOverlay from "./components/TourOverlay";
 import WelcomeTourPrompt from "./components/WelcomeTourPrompt";
+import TabBar, { type Tab } from "./components/TabBar";
+import BranchStatusBadge from "./components/BranchStatusBadge";
+import LearningModeToggle from "./components/LearningModeToggle";
+import GitMissingScreen from "./components/GitMissingScreen";
+import LandingPage from "./components/LandingPage";
 import Logo from "./components/Logo";
-import RootArt from "./components/RootArt";
 import { TOUR_STEPS } from "./lib/tour";
 import {
   openRepo,
@@ -27,59 +31,26 @@ import {
   pull,
   push,
   stash,
-  stashPop,
   commit as commitFn,
-  uncommitTo,
-  hardResetTo,
   getStatus,
   stageFile,
   unstageFile,
   getCommitGraph,
   getRepoFingerprint,
   listBranches,
-  switchBranch,
-  createBranch,
-  undoCreateBranch,
-  revertToCommit,
-  continueRevert,
-  abortRevert,
-  resetPreflight,
-  resetToCommit,
+  listStashes,
   pickFolder,
   checkGitAvailable,
   checkGitIdentity,
   checkTourOffered,
   markTourOffered,
-  openExternal,
-  mergePreview,
-  mergeBranch,
-  continueMerge,
-  abortMerge,
-  rebasePreflight,
-  rebaseBranch,
-  getRebaseStatus,
-  continueRebase,
-  abortRebase,
-  diffNameStatus,
-  listStashes,
-  applyStash,
-  popStash,
-  dropStash,
-  loadUndoHistory,
-  saveUndoHistory,
   type RepoInfo,
   type FileStatus,
   type CommitGraphData,
   type BranchInfo,
   type CommandResult,
   type GitIdentity,
-  type MergePreview,
-  type RebasePreflight,
-  type ResetPreflight,
-  type ResetMode,
-  type FileChange,
   type StashInfo,
-  type UndoHistoryEntry,
 } from "./lib/gitCommands";
 import {
   explainDetails,
@@ -93,123 +64,18 @@ import {
   type CommandName,
 } from "./lib/explain";
 import { isHead } from "./lib/graph";
+import { loadLearningMode, saveLearningMode } from "./lib/learningMode";
+import { UNDO_LABEL, computeUndo, undoConfirmText, relativeTime } from "./lib/undo";
+import { usePreviewFiles } from "./hooks/usePreviewFiles";
+import { useUndoHistory } from "./hooks/useUndoHistory";
+import { useBranches } from "./hooks/useBranches";
+import { usePausedOp } from "./hooks/usePausedOp";
+import { useStashActions } from "./hooks/useStashActions";
+import { useMergeRebase } from "./hooks/useMergeRebase";
+import { useResetRevert } from "./hooks/useResetRevert";
 
 const EMPTY_GRAPH: CommitGraphData = { commits: [], edges: [], laneCount: 0, hasMore: false };
 const GRAPH_PAGE_SIZE = 30;
-
-type Tab = "graph" | "commit" | "branches" | "stash";
-
-type UndoAction =
-  | { kind: "pull"; targetHash: string }
-  | { kind: "push"; targetHash: string }
-  | { kind: "stash" }
-  | { kind: "commit"; targetHash: string }
-  | { kind: "switchBranch"; targetBranch: string }
-  | { kind: "createBranch"; name: string; startPoint: string }
-  | { kind: "revert"; targetHash: string }
-  | { kind: "reset"; targetHash: string };
-
-const UNDO_LABEL: Record<UndoAction["kind"], string> = {
-  pull: "undo pull",
-  push: "undo push",
-  stash: "undo stash",
-  commit: "undo commit",
-  switchBranch: "undo switch",
-  createBranch: "undo new branch",
-  revert: "undo revert",
-  reset: "undo reset",
-};
-
-function undoConfirmText(action: UndoAction): string {
-  switch (action.kind) {
-    case "pull":
-      return "moves your branch back to before the pull. only works if your working directory is clean right now.";
-    case "push":
-      return "reverts the commits you just pushed and pushes that revert — nothing is deleted from history, and this is safe even though it already reached the remote.";
-    case "stash":
-      return "brings back the changes you just stashed.";
-    case "commit":
-      return "undoes the commit but keeps every change staged, ready to commit again.";
-    case "switchBranch":
-      return `switches back to ${action.targetBranch}.`;
-    case "createBranch":
-      return `deletes ${action.name} and switches back to ${action.startPoint}. only works if you haven't committed anything on it yet.`;
-    case "revert":
-      return "undoes the revert and keeps the changes staged, ready to commit again.";
-    case "reset":
-      return "moves your branch back to before the reset. changes a hard reset threw away can't be brought back.";
-  }
-}
-
-function computeUndo(kind: ActionKind, result: CommandResult): UndoAction | null {
-  const data = result.data;
-  switch (kind) {
-    case "pull":
-      return Number(data.commits ?? 0) > 0 && typeof data.before === "string" ? { kind: "pull", targetHash: data.before } : null;
-    case "push":
-      return data.hadUpstream === true && Number(data.commits ?? 0) > 0 && typeof data.before === "string"
-        ? { kind: "push", targetHash: data.before }
-        : null;
-    case "stash":
-      return Number(data.files ?? 0) > 0 ? { kind: "stash" } : null;
-    case "commit":
-      return typeof data.beforeHead === "string" ? { kind: "commit", targetHash: data.beforeHead } : null;
-    case "switchBranch":
-      return typeof data.before === "string" && data.before !== data.after ? { kind: "switchBranch", targetBranch: data.before } : null;
-    case "createBranch":
-      return typeof data.branch === "string" && typeof data.from === "string" ? { kind: "createBranch", name: data.branch, startPoint: data.from } : null;
-    case "revert":
-      return typeof data.before === "string" ? { kind: "revert", targetHash: data.before } : null;
-    case "reset":
-      return typeof data.before === "string" ? { kind: "reset", targetHash: data.before } : null;
-    default:
-      return null;
-  }
-}
-
-function withTarget(result: CommandResult, target: string): CommandResult {
-  return { ...result, data: { ...result.data, target } };
-}
-
-// how many past actions the undo history keeps around, most-recent-first - old enough to be
-// genuinely useful, capped so the persisted file and the dropdown both stay reasonable
-const MAX_UNDO_HISTORY = 20;
-
-interface UndoHistoryItem {
-  id: string;
-  action: UndoAction;
-  timestampMs: number;
-}
-
-function genId(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function toPersistedEntry(item: UndoHistoryItem): UndoHistoryEntry {
-  return { id: item.id, kind: item.action.kind, action: item.action, label: UNDO_LABEL[item.action.kind], timestampMs: item.timestampMs };
-}
-
-function fromPersistedEntry(entry: UndoHistoryEntry): UndoHistoryItem {
-  return { id: entry.id, action: entry.action as UndoAction, timestampMs: entry.timestampMs };
-}
-
-function relativeTime(ms: number): string {
-  const diffSec = Math.round((Date.now() - ms) / 1000);
-  if (diffSec < 60) return "just now";
-  const diffMin = Math.round(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHour = Math.round(diffMin / 60);
-  if (diffHour < 24) return `${diffHour}h ago`;
-  const diffDay = Math.round(diffHour / 24);
-  return `${diffDay}d ago`;
-}
-
-const LEARNING_MODE_KEY = "gitroot:learningMode";
-
-function loadLearningMode(): boolean {
-  const stored = localStorage.getItem(LEARNING_MODE_KEY);
-  return stored === null ? true : stored === "true";
-}
 
 export default function App() {
   const [repo, setRepo] = useState<RepoInfo | null>(null);
@@ -225,46 +91,7 @@ export default function App() {
   const [learningMode, setLearningMode] = useState(loadLearningMode);
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [stashes, setStashes] = useState<StashInfo[]>([]);
-  const [dropStashTarget, setDropStashTarget] = useState<StashInfo | null>(null);
-  const [revertTarget, setRevertTarget] = useState<CommitActionContext | null>(null);
   const [hunkEditorFile, setHunkEditorFile] = useState<string | null>(null);
-  const [undoHistory, setUndoHistory] = useState<UndoHistoryItem[]>([]);
-  const [undoConfirmingId, setUndoConfirmingId] = useState<string | null>(null);
-  const [undoHistoryOpen, setUndoHistoryOpen] = useState(false);
-  const undoHistoryRef = useRef<HTMLDivElement>(null);
-  const lastUndo = undoHistory[0] ?? null;
-  const undoConfirming = undoHistory.find((h) => h.id === undoConfirmingId) ?? null;
-
-  // close the history dropdown on an outside click, same pattern AccountSwitcher already uses
-  useEffect(() => {
-    if (!undoHistoryOpen) return;
-    function onDocClick(e: MouseEvent) {
-      if (undoHistoryRef.current && !undoHistoryRef.current.contains(e.target as Node)) setUndoHistoryOpen(false);
-    }
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, [undoHistoryOpen]);
-
-  function pushUndoHistory(action: UndoAction) {
-    if (!repo) return;
-    const next = [{ id: genId(), action, timestampMs: Date.now() }, ...undoHistory].slice(0, MAX_UNDO_HISTORY);
-    setUndoHistory(next);
-    saveUndoHistory(repo.path, next.map(toPersistedEntry)).catch(() => {});
-  }
-
-  // most call sites just have a raw UndoAction | null from computeUndo - this is the
-  // "record it if there's anything to record" shortcut for those
-  function recordUndo(action: UndoAction | null) {
-    if (action) pushUndoHistory(action);
-  }
-
-  function removeUndoHistoryEntry(id: string) {
-    setUndoHistory((prev) => {
-      const next = prev.filter((h) => h.id !== id);
-      if (repo) saveUndoHistory(repo.path, next.map(toPersistedEntry)).catch(() => {});
-      return next;
-    });
-  }
   const [gitAvailable, setGitAvailable] = useState<boolean | null>(null);
   const [gitIdentity, setGitIdentity] = useState<GitIdentity | null>(null);
   const [showTourPrompt, setShowTourPrompt] = useState(false);
@@ -273,57 +100,6 @@ export default function App() {
   // merge/rebase pickers with only one branch) force-show a preview instead, so the tour always
   // has something real to point at
   const touring = tourStep !== null;
-
-  // file-level "what will change" preview shared by reset/revert/merge/rebase dialogs -
-  // only one of those dialogs is ever open at once, so a single slot is enough
-  const [previewFiles, setPreviewFiles] = useState<FileChange[] | null>(null);
-  const [previewFilesLoading, setPreviewFilesLoading] = useState(false);
-  // guards against a slow, stale fetch (e.g. from a dialog the user already cancelled)
-  // resolving after a newer one and clobbering it with out-of-date files
-  const previewFilesRequestId = useRef(0);
-
-  async function loadPreviewFiles(repoPath: string, range: string) {
-    const requestId = ++previewFilesRequestId.current;
-    setPreviewFiles(null);
-    setPreviewFilesLoading(true);
-    try {
-      const files = await diffNameStatus(repoPath, range);
-      if (requestId === previewFilesRequestId.current) setPreviewFiles(files);
-    } catch {
-      if (requestId === previewFilesRequestId.current) setPreviewFiles([]);
-    } finally {
-      if (requestId === previewFilesRequestId.current) setPreviewFilesLoading(false);
-    }
-  }
-
-  const [mergeConfirm, setMergeConfirm] = useState<{ target: string; preview: MergePreview } | null>(null);
-  const [rebaseFlow, setRebaseFlow] = useState<{ step: "warning" | "plan"; target: string; preflight: RebasePreflight } | null>(null);
-  const [rebaseProgress, setRebaseProgress] = useState<{ current: number; total: number } | null>(null);
-  const [pausedOp, setPausedOp] = useState<{ kind: "merge" | "rebase" | "revert"; target: string } | null>(null);
-  const [resetFlow, setResetFlow] = useState<{
-    context: CommitActionContext;
-    preflight: ResetPreflight;
-    step: "warning" | "picker" | "confirmDiscard";
-    mode: ResetMode;
-  } | null>(null);
-
-  useEffect(() => {
-    checkGitAvailable()
-      .then((info) => setGitAvailable(info.available))
-      .catch(() => setGitAvailable(false));
-    // the tour-offered flag moved from localStorage to a file on disk (see checkTourOffered) -
-    // clean up both old keys, they're unused now
-    localStorage.removeItem("gitroot:tourOffered");
-    localStorage.removeItem("gitroot:tourOffered:v2");
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem(LEARNING_MODE_KEY, String(learningMode));
-  }, [learningMode]);
-
-  useEffect(() => {
-    if (activeTab !== "commit") setHunkEditorFile(null);
-  }, [activeTab]);
 
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
@@ -361,41 +137,6 @@ export default function App() {
     }
   }
 
-  const busyRef = useRef(busy);
-  useEffect(() => {
-    busyRef.current = busy;
-  }, [busy]);
-  const refreshRef = useRef(refresh);
-  useEffect(() => {
-    refreshRef.current = refresh;
-  });
-
-  useEffect(() => {
-    if (!repo) return;
-    let lastFingerprint: string | null = null;
-    const path = repo.path;
-
-    const tick = async () => {
-      let fp: string;
-      try {
-        fp = await getRepoFingerprint(path);
-      } catch {
-        return;
-      }
-      if (lastFingerprint === null) {
-        lastFingerprint = fp;
-        return;
-      }
-      if (fp !== lastFingerprint) {
-        lastFingerprint = fp;
-        if (busyRef.current === null) await refreshRef.current(path);
-      }
-    };
-
-    const interval = window.setInterval(tick, 1500);
-    return () => window.clearInterval(interval);
-  }, [repo]);
-
   function pulseHead(g: CommitGraphData) {
     const head = g.commits.find(isHead);
     if (!head) return;
@@ -409,6 +150,68 @@ export default function App() {
     return details;
   }
 
+  const { previewFiles, previewFilesLoading, loadPreviewFiles, setPreviewFiles } = usePreviewFiles();
+
+  const {
+    undoHistory,
+    setUndoConfirmingId,
+    undoHistoryOpen,
+    setUndoHistoryOpen,
+    undoHistoryRef,
+    lastUndo,
+    undoConfirming,
+    recordUndo,
+    handleUndo,
+  } = useUndoHistory({ repo, setBusy, applyResult, refresh, pulseHead });
+
+  const { handleSwitchBranch, handleCreateBranch } = useBranches({ repo, setBusy, applyResult, refresh, pulseHead, recordUndo, setLastAction });
+
+  const { pausedOp, setPausedOp, handleContinuePausedOp, handleAbortPausedOp } = usePausedOp({
+    repo,
+    setBusy,
+    applyResult,
+    refresh,
+    pulseHead,
+    recordUndo,
+    setLastAction,
+  });
+
+  const { dropStashTarget, setDropStashTarget, handleApplyStash, handlePopStash, confirmDropStash } = useStashActions({
+    repo,
+    setBusy,
+    applyResult,
+    refresh,
+    pulseHead,
+    recordUndo,
+    setLastAction,
+  });
+
+  const {
+    mergeConfirm,
+    setMergeConfirm,
+    rebaseFlow,
+    setRebaseFlow,
+    rebaseProgress,
+    setRebaseProgress,
+    handlePickMergeTarget,
+    confirmMerge,
+    handlePickRebaseTarget,
+    confirmRebaseWarning,
+    confirmRebasePlan,
+  } = useMergeRebase({ repo, setBusy, applyResult, refresh, pulseHead, recordUndo, setLastAction, setPausedOp, loadPreviewFiles, setPreviewFiles });
+
+  const {
+    revertTarget,
+    setRevertTarget,
+    resetFlow,
+    setResetFlow,
+    confirmRevert,
+    handlePickCommitAction,
+    confirmResetWarning,
+    confirmResetPicker,
+    confirmResetDiscard,
+  } = useResetRevert({ repo, setBusy, applyResult, refresh, pulseHead, recordUndo, setLastAction, setPausedOp, loadPreviewFiles, setPreviewFiles });
+
   function refreshGitIdentity() {
     if (!repo) return;
     checkGitIdentity(repo.path)
@@ -421,12 +224,6 @@ export default function App() {
     setGraphLimit(GRAPH_PAGE_SIZE);
     setActiveTab("graph");
     setHunkEditorFile(null);
-    // undo history is scoped per-repo and persisted in that repo's own .git dir, so switching
-    // repos means loading whatever history that repo already has, not clearing to empty
-    setUndoHistory([]);
-    loadUndoHistory(info.path)
-      .then((entries) => setUndoHistory(entries.map(fromPersistedEntry)))
-      .catch(() => setUndoHistory([]));
     // clear this so it does not poll or act on the wrong repo after switching
     setMergeConfirm(null);
     setRebaseFlow(null);
@@ -561,312 +358,58 @@ export default function App() {
     }
   }
 
-  async function handleSwitchBranch(name: string) {
+  useEffect(() => {
+    checkGitAvailable()
+      .then((info) => setGitAvailable(info.available))
+      .catch(() => setGitAvailable(false));
+    // the tour-offered flag moved from localStorage to a file on disk (see checkTourOffered) -
+    // clean up both old keys, they're unused now
+    localStorage.removeItem("gitroot:tourOffered");
+    localStorage.removeItem("gitroot:tourOffered:v2");
+  }, []);
+
+  useEffect(() => {
+    saveLearningMode(learningMode);
+  }, [learningMode]);
+
+  useEffect(() => {
+    if (activeTab !== "commit") setHunkEditorFile(null);
+  }, [activeTab]);
+
+  const busyRef = useRef(busy);
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
+  const refreshRef = useRef(refresh);
+  useEffect(() => {
+    refreshRef.current = refresh;
+  });
+
+  useEffect(() => {
     if (!repo) return;
-    setBusy("switchBranch");
-    try {
-      const result = await switchBranch(repo.path, name);
-      const details = applyResult("switchBranch", result);
-      if (!details.isError) recordUndo(computeUndo("switchBranch", result));
-      const g = await refresh(repo.path);
-      if (!details.isError) pulseHead(g);
-    } finally {
-      setBusy(null);
-    }
-  }
+    let lastFingerprint: string | null = null;
+    const path = repo.path;
 
-  async function handleCreateBranch(name: string, startPoint: string) {
-    if (!repo) return;
-    setBusy("createBranch");
-    try {
-      const result = await createBranch(repo.path, name, startPoint);
-      const details = applyResult("createBranch", result);
-      if (!details.isError) recordUndo(computeUndo("createBranch", result));
-      const g = await refresh(repo.path);
-      if (!details.isError) pulseHead(g);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handleApplyStash(stash: StashInfo) {
-    if (!repo) return;
-    setBusy("applyStash");
-    try {
-      const result = await applyStash(repo.path, stash.stashRef);
-      // withTarget so the result text can name which stash this was ({target}), not just
-      // say "applied the stash" - the backend only knows the ref, the frontend already has
-      // the human message right here
-      applyResult("applyStash", withTarget(result, stash.message));
-      await refresh(repo.path);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handlePopStash(stash: StashInfo) {
-    if (!repo) return;
-    setBusy("popStash");
-    try {
-      const result = await popStash(repo.path, stash.stashRef);
-      applyResult("popStash", withTarget(result, stash.message));
-      await refresh(repo.path);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function confirmDropStash() {
-    if (!repo || !dropStashTarget) return;
-    const stash = dropStashTarget;
-    setDropStashTarget(null);
-    setBusy("dropStash");
-    try {
-      const result = await dropStash(repo.path, stash.stashRef);
-      applyResult("dropStash", withTarget(result, stash.message));
-      await refresh(repo.path);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handlePickMergeTarget(target: string) {
-    if (!repo) return;
-    const preview = await mergePreview(repo.path, target);
-    setMergeConfirm({ target, preview });
-    loadPreviewFiles(repo.path, `HEAD...${target}`);
-  }
-
-  async function confirmMerge() {
-    if (!repo || !mergeConfirm) return;
-    const target = mergeConfirm.target;
-    setMergeConfirm(null);
-    setPreviewFiles(null);
-    setBusy("merge");
-    try {
-      const result = await mergeBranch(repo.path, target);
-      if (result.conflict) {
-        setPausedOp({ kind: "merge", target });
-        setLastAction(explainDetails("merge", result));
-        await refresh(repo.path);
-        return;
-      }
-      const details = applyResult("merge", result);
-      const g = await refresh(repo.path);
-      if (!details.isError) pulseHead(g);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handlePickRebaseTarget(target: string) {
-    if (!repo) return;
-    const preflight = await rebasePreflight(repo.path, target);
-    setRebaseFlow({ step: preflight.alreadyPushedCount > 0 ? "warning" : "plan", target, preflight });
-    loadPreviewFiles(repo.path, `${target}...HEAD`);
-  }
-
-  function confirmRebaseWarning() {
-    if (!rebaseFlow) return;
-    setRebaseFlow({ ...rebaseFlow, step: "plan" });
-  }
-
-  async function confirmRebasePlan() {
-    if (!repo || !rebaseFlow) return;
-    const target = rebaseFlow.target;
-    setRebaseFlow(null);
-    setPreviewFiles(null);
-    setBusy("rebase");
-    const poll = window.setInterval(async () => {
+    const tick = async () => {
+      let fp: string;
       try {
-        const status = await getRebaseStatus(repo.path);
-        setRebaseProgress(status.inProgress ? { current: status.current, total: status.total } : null);
+        fp = await getRepoFingerprint(path);
       } catch {
-      }
-    }, 300);
-    try {
-      const result = await rebaseBranch(repo.path, target);
-      if (result.conflict) {
-        setPausedOp({ kind: "rebase", target });
-        setLastAction(explainDetails("rebase", result));
-        await refresh(repo.path);
         return;
       }
-      const details = applyResult("rebase", result);
-      const g = await refresh(repo.path);
-      if (!details.isError) pulseHead(g);
-    } finally {
-      window.clearInterval(poll);
-      setRebaseProgress(null);
-      setBusy(null);
-    }
-  }
-
-  async function handleContinuePausedOp() {
-    if (!repo || !pausedOp) return;
-    setBusy("conflictContinue");
-    try {
-      const raw =
-        pausedOp.kind === "merge"
-          ? await continueMerge(repo.path)
-          : pausedOp.kind === "rebase"
-          ? await continueRebase(repo.path)
-          : await continueRevert(repo.path);
-      const result = withTarget(raw, pausedOp.target);
-      if (result.conflict) {
-        setLastAction(explainDetails(pausedOp.kind, result));
+      if (lastFingerprint === null) {
+        lastFingerprint = fp;
         return;
       }
-      setPausedOp(null);
-      const details = applyResult(pausedOp.kind, result);
-      if (!details.isError && pausedOp.kind === "revert") recordUndo(computeUndo("revert", result));
-      const g = await refresh(repo.path);
-      if (!details.isError) pulseHead(g);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handleAbortPausedOp() {
-    if (!repo || !pausedOp) return;
-    setBusy("conflictAbort");
-    try {
-      if (pausedOp.kind === "merge") await abortMerge(repo.path);
-      else if (pausedOp.kind === "rebase") await abortRebase(repo.path);
-      else await abortRevert(repo.path);
-      setPausedOp(null);
-      setLastAction(null);
-      await refresh(repo.path);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function confirmRevert() {
-    if (!repo || !revertTarget) return;
-    const target = revertTarget.target.hash;
-    setRevertTarget(null);
-    setPreviewFiles(null);
-    setBusy("revert");
-    try {
-      const result = await revertToCommit(repo.path, target);
-      if (result.conflict) {
-        setPausedOp({ kind: "revert", target });
-        setLastAction(explainDetails("revert", result));
-        await refresh(repo.path);
-        return;
+      if (fp !== lastFingerprint) {
+        lastFingerprint = fp;
+        if (busyRef.current === null) await refreshRef.current(path);
       }
-      const details = applyResult("revert", result);
-      if (!details.isError) recordUndo(computeUndo("revert", result));
-      const g = await refresh(repo.path);
-      if (!details.isError) pulseHead(g);
-    } finally {
-      setBusy(null);
-    }
-  }
+    };
 
-  async function handlePickCommitAction(kind: "reset" | "revert", context: CommitActionContext) {
-    if (!repo) return;
-    const range = `${context.target.hash}..${context.head.hash}`;
-    if (kind === "revert") {
-      setRevertTarget(context);
-      loadPreviewFiles(repo.path, range);
-      return;
-    }
-    const preflight = await resetPreflight(repo.path, context.target.hash);
-    setResetFlow({
-      context,
-      preflight,
-      step: preflight.alreadyPushedCount > 0 ? "warning" : "picker",
-      mode: "mixed",
-    });
-    loadPreviewFiles(repo.path, range);
-  }
-
-  function confirmResetWarning() {
-    setResetFlow((rf) => (rf ? { ...rf, step: "picker" } : rf));
-  }
-
-  function confirmResetPicker() {
-    if (!resetFlow) return;
-    if (resetFlow.mode === "hard") {
-      setResetFlow({ ...resetFlow, step: "confirmDiscard" });
-      return;
-    }
-    executeReset(resetFlow.mode);
-  }
-
-  function confirmResetDiscard() {
-    executeReset("hard");
-  }
-
-  async function executeReset(mode: ResetMode) {
-    if (!repo || !resetFlow) return;
-    const target = resetFlow.context.target.hash;
-    setBusy("reset");
-    try {
-      const result = await resetToCommit(repo.path, target, mode);
-      const details = applyResult("reset", result);
-      if (!details.isError) recordUndo(computeUndo("reset", result));
-      setResetFlow(null);
-      setPreviewFiles(null);
-      const g = await refresh(repo.path);
-      if (!details.isError) pulseHead(g);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  // undoes one specific entry from the history, not necessarily the most recent - each entry
-  // just replays its own reverse command against the repo's current state, independent of
-  // whatever else has happened since (git has no real transactional undo; this is the same
-  // limitation that already existed for "undo last action", just no longer hidden behind it
-  // always being the most recent thing)
-  async function handleUndo(entryId: string) {
-    const entry = undoHistory.find((h) => h.id === entryId);
-    if (!repo || !entry) return;
-    const action = entry.action;
-    setBusy("undo");
-    try {
-      let result: CommandResult;
-      switch (action.kind) {
-        case "pull":
-        case "reset":
-          result = await hardResetTo(repo.path, action.targetHash);
-          break;
-        case "commit":
-        case "revert":
-          result = await uncommitTo(repo.path, action.targetHash);
-          break;
-        case "stash":
-          result = await stashPop(repo.path);
-          break;
-        case "switchBranch":
-          result = await switchBranch(repo.path, action.targetBranch);
-          break;
-        case "createBranch":
-          result = await undoCreateBranch(repo.path, action.name, action.startPoint);
-          break;
-        case "push": {
-          removeUndoHistoryEntry(entryId); // not safe to just retry this if it fail halfway
-          const revertResult = await revertToCommit(repo.path, action.targetHash);
-          if (!revertResult.success) {
-            result = revertResult;
-            break;
-          }
-          const pushResult = await push(repo.path);
-          result = { ...pushResult, command: `${revertResult.command} && ${pushResult.command}` };
-          break;
-        }
-      }
-      const details = applyResult("undo", result);
-      if (!details.isError) removeUndoHistoryEntry(entryId);
-      const g = await refresh(repo.path);
-      if (!details.isError) pulseHead(g);
-    } finally {
-      setBusy(null);
-    }
-  }
+    const interval = window.setInterval(tick, 1500);
+    return () => window.clearInterval(interval);
+  }, [repo]);
 
   if (gitAvailable === null) return null;
   if (gitAvailable === false) {
@@ -1375,640 +918,11 @@ export default function App() {
   );
 }
 
-const TAB_LABELS: { key: Tab; label: string }[] = [
-  { key: "graph", label: "graph" },
-  { key: "commit", label: "commit" },
-  { key: "branches", label: "branches" },
-  { key: "stash", label: "stash" },
-];
-
-function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void }) {
-  return (
-    <div data-tour="tab-bar" style={{ padding: "14px 20px 10px" }}>
-      <div style={{ display: "inline-flex", gap: 2, padding: 3, borderRadius: 11, background: "var(--surface-2)" }}>
-        {TAB_LABELS.map((t) => {
-          const isActive = active === t.key;
-          return (
-            <button
-              key={t.key}
-              onClick={() => onChange(t.key)}
-              style={{
-                position: "relative",
-                padding: "6px 16px",
-                border: "none",
-                background: "none",
-                color: isActive ? "var(--text-primary)" : "var(--text-muted)",
-                fontSize: 13,
-                fontWeight: isActive ? 600 : 500,
-                cursor: "pointer",
-                borderRadius: 8,
-                transition: "color 0.15s",
-              }}
-            >
-              {isActive && (
-                <motion.div
-                  layoutId="tab-pill"
-                  transition={{ type: "spring", stiffness: 500, damping: 34 }}
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    borderRadius: 8,
-                    // this work in both light and dark theme, comparing surface colors direct does not
-                    background: "color-mix(in srgb, white 14%, var(--surface-2))",
-                    border: "1px solid color-mix(in srgb, var(--text-primary) 8%, transparent)",
-                    boxShadow: "var(--shadow-sm)",
-                    zIndex: 0,
-                  }}
-                />
-              )}
-              <span style={{ position: "relative", zIndex: 1 }}>{t.label}</span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function UndoIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 10h10a5 5 0 0 1 0 10H8" />
       <path d="M7 5L3 10l4 5" />
     </svg>
-  );
-}
-
-function BranchStatusBadge({ branch, changedFiles }: { branch: BranchInfo | null; changedFiles: number }) {
-  if (!branch) return null;
-  const clean = changedFiles === 0;
-
-  return (
-    <div data-tour="branch-status" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-      {branch.upstream ? (
-        branch.ahead === 0 && branch.behind === 0 ? (
-          <Chip label="up to date" title={`in sync with ${branch.upstream}`} />
-        ) : (
-          <>
-            {branch.ahead > 0 && (
-              <Chip
-                label={`↑${branch.ahead}`}
-                title={`${branch.ahead} commit${branch.ahead === 1 ? "" : "s"} not pushed to ${branch.upstream} yet`}
-              />
-            )}
-            {branch.behind > 0 && (
-              <Chip
-                label={`↓${branch.behind}`}
-                title={`${branch.behind} commit${branch.behind === 1 ? "" : "s"} on ${branch.upstream} you don't have yet — pull to catch up`}
-              />
-            )}
-          </>
-        )
-      ) : (
-        <Chip label="no upstream" title="this branch hasn't been pushed anywhere yet" muted />
-      )}
-      <Chip
-        label={clean ? "clean" : `${changedFiles} uncommitted`}
-        title={
-          clean
-            ? "working directory matches the last commit — nothing to commit"
-            : `${changedFiles} file${changedFiles === 1 ? "" : "s"} changed since the last commit`
-        }
-        dotColor={clean ? "var(--lane-3)" : "var(--lane-2)"}
-      />
-    </div>
-  );
-}
-
-function Chip({ label, title, muted, dotColor }: { label: string; title?: string; muted?: boolean; dotColor?: string }) {
-  return (
-    <span
-      title={title}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 5,
-        fontSize: 10.5,
-        fontWeight: 600,
-        color: muted ? "var(--text-muted)" : "var(--text-secondary)",
-        background: "var(--surface-2)",
-        border: "1px solid var(--border)",
-        borderRadius: 999,
-        padding: "2px 8px",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {dotColor && <span style={{ width: 6, height: 6, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />}
-      {label}
-    </span>
-  );
-}
-
-function LearningModeToggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      data-tour="learning-mode"
-      onClick={() => onChange(!value)}
-      title={value ? "learning mode is on — click to turn off" : "learning mode is off — click to turn on"}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        background: "none",
-        border: "none",
-        cursor: "pointer",
-        padding: 0,
-      }}
-    >
-      <span style={{ fontSize: 12.5, color: value ? "var(--text-primary)" : "var(--text-muted)", fontWeight: 500 }}>
-        learning mode
-      </span>
-      <span
-        style={{
-          position: "relative",
-          width: 34,
-          height: 19,
-          borderRadius: 999,
-          background: value ? "var(--lane-1)" : "var(--surface-2)",
-          border: "1px solid " + (value ? "color-mix(in srgb, var(--lane-1) 60%, transparent)" : "var(--border)"),
-          transition: "background 0.15s",
-          flexShrink: 0,
-        }}
-      >
-        <motion.span
-          animate={{ left: value ? 16 : 2 }}
-          transition={{ type: "spring", stiffness: 500, damping: 30 }}
-          style={{
-            position: "absolute",
-            top: 1.5,
-            width: 14,
-            height: 14,
-            borderRadius: "50%",
-            background: "#fff",
-            boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
-          }}
-        />
-      </span>
-    </button>
-  );
-}
-
-interface LandingPageProps {
-  opening: boolean;
-  openError: string | null;
-  showManualInput: boolean;
-  pathInput: string;
-  onBrowse: () => void;
-  onToggleManualInput: () => void;
-  onPathInputChange: (v: string) => void;
-  onManualOpen: () => void;
-  notGitFolderPath: string | null;
-  initRemoteUrl: string;
-  onInitRemoteUrlChange: (v: string) => void;
-  onInit: () => void;
-  onCancelInit: () => void;
-  showCloneInput: boolean;
-  onToggleCloneInput: () => void;
-  cloneUrl: string;
-  onCloneUrlChange: (v: string) => void;
-  onClone: () => void;
-  cloning: boolean;
-}
-
-const BLOBS = [
-  { color: "var(--lane-3)", size: 420, top: "-10%", left: "-8%", dur: 22 },
-  { color: "var(--lane-1)", size: 460, top: "40%", left: "70%", dur: 26 },
-  { color: "var(--lane-7)", size: 320, top: "70%", left: "5%", dur: 19 },
-];
-
-const FEATURES: { color: string; text: string }[] = [
-  { color: "var(--lane-1)", text: "every command explained in plain language" },
-  { color: "var(--lane-3)", text: "undo safely — history is never force-deleted" },
-  { color: "var(--lane-2)", text: "stage changes file-by-file, even piece-by-piece" },
-  { color: "var(--lane-7)", text: "every branch visible, one click to switch" },
-];
-
-function GitMissingScreen({ onRetry }: { onRetry: () => void }) {
-  return (
-    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--surface-0)", padding: 40 }}>
-      <div style={{ maxWidth: 380, textAlign: "center" }}>
-        <Logo size={40} />
-        <h1 style={{ fontSize: 19, margin: "16px 0 8px" }}>git isn't installed</h1>
-        <p style={{ color: "var(--text-secondary)", fontSize: 13.5, lineHeight: 1.6, margin: "0 0 22px" }}>
-          GitRoot runs the real git on your machine, so it needs git installed first. install it, then come back here.
-        </p>
-        <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-          <button
-            onClick={() => openExternal("https://git-scm.com/downloads")}
-            style={{
-              padding: "10px 18px",
-              borderRadius: 10,
-              border: "none",
-              background: "linear-gradient(135deg, var(--lane-3), var(--lane-1))",
-              color: "#fff",
-              fontSize: 13.5,
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            get git
-          </button>
-          <button
-            onClick={onRetry}
-            style={{
-              padding: "10px 18px",
-              borderRadius: 10,
-              border: "1px solid var(--border)",
-              background: "none",
-              color: "var(--text-primary)",
-              fontSize: 13.5,
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            i installed it — check again
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function LandingPage({
-  opening,
-  openError,
-  showManualInput,
-  pathInput,
-  onBrowse,
-  onToggleManualInput,
-  onPathInputChange,
-  onManualOpen,
-  notGitFolderPath,
-  initRemoteUrl,
-  onInitRemoteUrlChange,
-  onInit,
-  onCancelInit,
-  showCloneInput,
-  onToggleCloneInput,
-  cloneUrl,
-  onCloneUrlChange,
-  onClone,
-  cloning,
-}: LandingPageProps) {
-  const busy = opening || cloning;
-
-  return (
-    <div style={{ position: "relative", height: "100%", overflow: "hidden", background: "var(--surface-0)" }}>
-      {BLOBS.map((b, i) => (
-        <motion.div
-          key={i}
-          animate={{ x: [0, 30, -20, 0], y: [0, -20, 15, 0] }}
-          transition={{ duration: b.dur, repeat: Infinity, ease: "easeInOut" }}
-          style={{
-            position: "absolute",
-            top: b.top,
-            left: b.left,
-            width: b.size,
-            height: b.size,
-            borderRadius: "50%",
-            background: b.color,
-            opacity: 0.14,
-            filter: "blur(90px)",
-            pointerEvents: "none",
-          }}
-        />
-      ))}
-
-      <div style={{ position: "relative", height: "100%", overflow: "auto" }}>
-        <div style={{ minHeight: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: "48px 40px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 56, maxWidth: 960, width: "100%", flexWrap: "wrap", justifyContent: "center" }}>
-            <div style={{ flex: "1 1 420px", maxWidth: 460 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-                <Logo size={44} />
-                <h1
-                  style={{
-                    fontSize: 28,
-                    fontWeight: 700,
-                    margin: 0,
-                    backgroundImage: "linear-gradient(135deg, var(--text-primary), var(--text-secondary))",
-                    backgroundClip: "text",
-                    WebkitBackgroundClip: "text",
-                    color: "transparent",
-                    letterSpacing: -0.5,
-                  }}
-                >
-                  GitRoot
-                </h1>
-              </div>
-              <p style={{ color: "var(--text-secondary)", margin: "0 0 26px", fontSize: 15, lineHeight: 1.55, maxWidth: 400 }}>
-                A git client that explains what it's doing, every time — open a folder, clone a repository, or
-                start a brand new one.
-              </p>
-
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <motion.button
-                  onClick={onBrowse}
-                  disabled={busy}
-                  whileHover={busy ? undefined : { scale: 1.02 }}
-                  whileTap={busy ? undefined : { scale: 0.98 }}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "13px 22px",
-                    borderRadius: 12,
-                    border: "none",
-                    background: "linear-gradient(135deg, var(--lane-3), var(--lane-1))",
-                    color: "#fff",
-                    fontSize: 14.5,
-                    fontWeight: 600,
-                    cursor: busy ? "default" : "pointer",
-                    opacity: busy ? 0.7 : 1,
-                    boxShadow: "0 8px 24px color-mix(in srgb, var(--lane-1) 40%, transparent)",
-                  }}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
-                  </svg>
-                  {opening ? "opening…" : "choose a folder"}
-                </motion.button>
-
-                <motion.button
-                  onClick={onToggleCloneInput}
-                  disabled={busy}
-                  whileHover={busy ? undefined : { scale: 1.02 }}
-                  whileTap={busy ? undefined : { scale: 0.98 }}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 9,
-                    padding: "13px 20px",
-                    borderRadius: 12,
-                    border: "1px solid var(--border-strong)",
-                    background: showCloneInput ? "var(--surface-2)" : "var(--surface-1)",
-                    color: "var(--text-primary)",
-                    fontSize: 14.5,
-                    fontWeight: 600,
-                    cursor: busy ? "default" : "pointer",
-                    opacity: busy ? 0.7 : 1,
-                  }}
-                >
-                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="6" cy="6" r="2.5" />
-                    <circle cx="6" cy="18" r="2.5" />
-                    <circle cx="18" cy="12" r="2.5" />
-                    <path d="M6 8.5V15.5" />
-                    <path d="M8 7l7.5 4" />
-                  </svg>
-                  clone from a URL
-                </motion.button>
-              </div>
-
-              <AnimatePresence>
-                {showCloneInput && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    style={{ overflow: "hidden" }}
-                  >
-                    <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                      <input
-                        value={cloneUrl}
-                        onChange={(e) => onCloneUrlChange(e.target.value)}
-                        placeholder="git@github.com:you/repo.git"
-                        onKeyDown={(e) => e.key === "Enter" && onClone()}
-                        autoFocus
-                        style={{
-                          flex: 1,
-                          padding: "9px 10px",
-                          borderRadius: 8,
-                          border: "1px solid var(--border)",
-                          background: "var(--surface-1)",
-                          color: "var(--text-primary)",
-                          fontSize: 13,
-                          fontFamily: "ui-monospace, monospace",
-                        }}
-                      />
-                      <button
-                        onClick={onClone}
-                        disabled={busy || cloneUrl.trim().length === 0}
-                        style={{
-                          padding: "9px 16px",
-                          borderRadius: 8,
-                          border: "none",
-                          background: "linear-gradient(135deg, var(--lane-3), var(--lane-1))",
-                          color: "#fff",
-                          fontWeight: 600,
-                          fontSize: 13,
-                          cursor: busy || cloneUrl.trim().length === 0 ? "default" : "pointer",
-                          opacity: busy || cloneUrl.trim().length === 0 ? 0.6 : 1,
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {cloning ? "cloning…" : "clone"}
-                      </button>
-                    </div>
-                    <p style={{ margin: "8px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>
-                      you'll be asked where to put it — GitRoot creates a new folder there for the repo.
-                    </p>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              <div style={{ marginTop: 12 }}>
-                <button
-                  onClick={onToggleManualInput}
-                  style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 12.5, cursor: "pointer", textDecoration: "underline", padding: 0 }}
-                >
-                  {showManualInput ? "hide" : "or paste a path instead"}
-                </button>
-              </div>
-
-              <AnimatePresence>
-                {showManualInput && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    style={{ overflow: "hidden" }}
-                  >
-                    <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                      <input
-                        value={pathInput}
-                        onChange={(e) => onPathInputChange(e.target.value)}
-                        placeholder="/path/to/repo"
-                        onKeyDown={(e) => e.key === "Enter" && onManualOpen()}
-                        style={{
-                          flex: 1,
-                          padding: "9px 10px",
-                          borderRadius: 8,
-                          border: "1px solid var(--border)",
-                          background: "var(--surface-1)",
-                          color: "var(--text-primary)",
-                          fontSize: 13,
-                        }}
-                      />
-                      <button
-                        onClick={onManualOpen}
-                        disabled={busy}
-                        style={{
-                          padding: "9px 16px",
-                          borderRadius: 8,
-                          border: "1px solid var(--border)",
-                          background: "var(--surface-1)",
-                          color: "var(--text-primary)",
-                          fontSize: 13,
-                          cursor: busy ? "default" : "pointer",
-                        }}
-                      >
-                        open
-                      </button>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              <AnimatePresence>
-                {notGitFolderPath && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    style={{
-                      marginTop: 16,
-                      padding: "14px 16px",
-                      borderRadius: 10,
-                      background: "var(--surface-1)",
-                      border: "1px solid var(--border)",
-                    }}
-                  >
-                    <p style={{ margin: "0 0 3px", fontSize: 13, fontWeight: 600 }}>that folder isn't a git repository yet</p>
-                    <p
-                      style={{
-                        margin: "0 0 10px",
-                        fontSize: 11.5,
-                        fontFamily: "ui-monospace, monospace",
-                        color: "var(--text-muted)",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {notGitFolderPath}
-                    </p>
-                    <p style={{ margin: "0 0 10px", fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.5 }}>
-                      set one up here — optionally link a remote now (or skip this and add one later):
-                    </p>
-                    <input
-                      value={initRemoteUrl}
-                      onChange={(e) => onInitRemoteUrlChange(e.target.value)}
-                      placeholder="remote URL (optional) — e.g. git@github.com:you/repo.git"
-                      onKeyDown={(e) => e.key === "Enter" && onInit()}
-                      style={{
-                        width: "100%",
-                        padding: "8px 10px",
-                        borderRadius: 8,
-                        border: "1px solid var(--border)",
-                        background: "var(--surface-0)",
-                        color: "var(--text-primary)",
-                        fontSize: 12.5,
-                        marginBottom: 10,
-                      }}
-                    />
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button
-                        onClick={onInit}
-                        disabled={busy}
-                        style={{
-                          flex: 1,
-                          padding: "9px 14px",
-                          borderRadius: 8,
-                          border: "none",
-                          background: "linear-gradient(135deg, var(--lane-3), var(--lane-1))",
-                          color: "#fff",
-                          fontSize: 13,
-                          fontWeight: 600,
-                          cursor: busy ? "default" : "pointer",
-                          opacity: busy ? 0.7 : 1,
-                        }}
-                      >
-                        {opening ? "setting up…" : "initialize repository"}
-                      </button>
-                      <button
-                        onClick={onCancelInit}
-                        disabled={busy}
-                        style={{
-                          padding: "9px 14px",
-                          borderRadius: 8,
-                          border: "1px solid var(--border)",
-                          background: "none",
-                          color: "var(--text-muted)",
-                          fontSize: 13,
-                          cursor: busy ? "default" : "pointer",
-                        }}
-                      >
-                        cancel
-                      </button>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              <AnimatePresence>
-                {openError && (
-                  <motion.p
-                    initial={{ opacity: 0, y: -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    style={{
-                      marginTop: 16,
-                      padding: "10px 14px",
-                      borderRadius: 8,
-                      background: "color-mix(in srgb, var(--danger) 12%, transparent)",
-                      border: "1px solid color-mix(in srgb, var(--danger) 35%, transparent)",
-                      color: "var(--danger)",
-                      fontSize: 13,
-                    }}
-                  >
-                    {openError}
-                  </motion.p>
-                )}
-              </AnimatePresence>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 30 }}>
-                {FEATURES.map((f) => (
-                  <div key={f.text} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5, color: "var(--text-secondary)" }}>
-                    <span
-                      style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: "50%",
-                        background: f.color,
-                        boxShadow: `0 0 5px 1px color-mix(in srgb, ${f.color} 55%, transparent)`,
-                        flexShrink: 0,
-                      }}
-                    />
-                    {f.text}
-                  </div>
-                ))}
-              </div>
-
-              <p style={{ marginTop: 24, color: "var(--text-muted)", fontSize: 11.5 }}>
-                everything runs locally — nothing about your code leaves your machine.
-              </p>
-            </div>
-
-            <motion.div
-              animate={{ y: [0, -10, 0] }}
-              transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
-              style={{ flex: "0 0 auto", width: 260, height: 380 }}
-            >
-              <RootArt />
-            </motion.div>
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }

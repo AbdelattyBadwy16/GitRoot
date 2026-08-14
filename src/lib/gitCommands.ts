@@ -30,6 +30,13 @@ export interface FileStatus {
   statusLabel: string;
 }
 
+// injects a human-readable {target} (a stash message, a commit hash, ...) into a result's data
+// so explainDetails/dictionary templates can name what an action was about - used wherever the
+// backend only knows a ref/hash but the frontend already has the friendlier label in hand
+export function withTarget(result: CommandResult, target: string): CommandResult {
+  return { ...result, data: { ...result.data, target } };
+}
+
 export interface BranchInfo {
   name: string;
   isCurrent: boolean;
