@@ -16,6 +16,7 @@ fn main() {
             undo_history::save_undo_history,
             git::commands::pull,
             git::commands::push,
+            git::commands::force_push,
             git::commands::stash,
             git::commands::stash_pop,
             git::commands::list_stashes,

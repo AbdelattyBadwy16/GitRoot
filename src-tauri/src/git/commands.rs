@@ -1,6 +1,7 @@
 use super::{
-    looks_like_auth_error, looks_like_network_error, looks_like_no_tracking_error,
-    looks_like_non_fast_forward_error, run_git, run_git_with_stdin, GitOutput,
+    head_used_to_point_at, looks_like_auth_error, looks_like_network_error,
+    looks_like_no_tracking_error, looks_like_non_fast_forward_error, run_git, run_git_with_stdin,
+    GitOutput,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -103,7 +104,7 @@ impl CommandResult {
         }
     }
 
-    fn non_fast_forward_failure(command: &str, remote: &str) -> Self {
+    fn non_fast_forward_failure(command: &str, remote: &str, rewound: bool) -> Self {
         Self {
             success: false,
             auth_error: false,
@@ -111,7 +112,7 @@ impl CommandResult {
             conflict: false,
             non_fast_forward: true,
             raw_stderr: None,
-            data: json!({ "remote": remote }),
+            data: json!({ "remote": remote, "rewound": rewound }),
             command: command.to_string(),
         }
     }
@@ -148,13 +149,21 @@ impl CommandResult {
         result
     }
 
-    fn from_remote_failure(command: &str, stderr: String, remote: &str) -> Self {
+    fn from_remote_failure(repo_path: &str, command: &str, stderr: String, remote: &str) -> Self {
         if looks_like_auth_error(&stderr) {
             Self::auth_failure(command, remote)
         } else if looks_like_network_error(&stderr) {
             Self::network_failure(command, remote)
         } else if looks_like_non_fast_forward_error(&stderr) {
-            Self::non_fast_forward_failure(command, remote)
+            // was the remote's *actual current* tip ever our own HEAD before? if so, this isn't
+            // "someone else's new work" - it's us having reset past commits we ourselves already
+            // pushed, and the fix is a force-push, not a pull (which would just bring them right
+            // back). this has to ask the remote directly (`ls-remote`, no local state changed) -
+            // the cached `@{u}` tracking ref is exactly what's stale here (a rejected push never
+            // updates it), so checking against it would just rediscover our own last-known state.
+            let rewound = remote_branch_tip(repo_path, remote)
+                .is_some_and(|tip| head_used_to_point_at(repo_path, &tip));
+            Self::non_fast_forward_failure(command, remote, rewound)
         } else {
             Self::failure(command, stderr)
         }
@@ -172,6 +181,24 @@ fn upstream_ref(repo_path: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+// the remote's actual current tip for `upstream` (e.g. "origin/main"), fetched fresh with
+// `ls-remote` rather than read from the local `origin/main` tracking ref - that local copy is
+// only ever as fresh as the last fetch/pull/successful push, so it's the wrong thing to trust
+// right after a push was *rejected*.
+fn remote_branch_tip(repo_path: &str, upstream: &str) -> Option<String> {
+    let (remote_name, branch) = upstream.split_once('/')?;
+    let ref_name = format!("refs/heads/{branch}");
+    let out = run_git(
+        repo_path,
+        &["ls-remote", "--exit-code", remote_name, &ref_name],
+    )
+    .ok()?;
+    if !out.success {
+        return None;
+    }
+    out.stdout.split_whitespace().next().map(str::to_string)
 }
 
 #[tauri::command]
@@ -228,6 +255,7 @@ fn pull_sync(repo_path: String) -> Result<CommandResult, String> {
             ));
         }
         return Ok(CommandResult::from_remote_failure(
+            &repo_path,
             &command,
             result.stderr,
             &remote,
@@ -300,6 +328,7 @@ fn push_sync(repo_path: String) -> Result<CommandResult, String> {
 
     if !result.success {
         return Ok(CommandResult::from_remote_failure(
+            &repo_path,
             &command,
             result.stderr,
             &remote,
@@ -316,6 +345,46 @@ fn push_sync(repo_path: String) -> Result<CommandResult, String> {
             "before": before,
             "after": short_hash(&after),
             "hadUpstream": has_upstream,
+        }),
+    ))
+}
+
+// only reachable after a plain push was rejected with `non_fast_forward: true, rewound: true` -
+// i.e. the local branch was reset past commits still sitting on the remote. `--force-with-lease`
+// (not a bare `--force`) still refuses if the remote moved again for some *other* reason since
+// gitroot last saw it, so this can't silently clobber someone else's genuinely new work.
+#[tauri::command]
+pub async fn force_push(repo_path: String) -> Result<CommandResult, String> {
+    tauri::async_runtime::spawn_blocking(move || force_push_sync(repo_path))
+        .await
+        .map_err(|e| format!("internal error: {e}"))?
+}
+
+fn force_push_sync(repo_path: String) -> Result<CommandResult, String> {
+    let remote = upstream_ref(&repo_path).unwrap_or_else(|| "origin".to_string());
+    let before = run_git(&repo_path, &["rev-parse", "@{u}"])?.stdout;
+
+    let push_args = ["push", "--force-with-lease"];
+    let command = display_command(&push_args);
+    let result = run_git(&repo_path, &push_args)?;
+
+    if !result.success {
+        return Ok(CommandResult::from_remote_failure(
+            &repo_path,
+            &command,
+            result.stderr,
+            &remote,
+        ));
+    }
+
+    let after = run_git(&repo_path, &["rev-parse", "HEAD"])?.stdout;
+
+    Ok(CommandResult::ok(
+        &command,
+        json!({
+            "remote": remote,
+            "before": short_hash(&before),
+            "after": short_hash(&after),
         }),
     ))
 }
@@ -450,33 +519,74 @@ fn reset_to_commit_sync(
 }
 
 #[tauri::command]
-pub async fn stash(repo_path: String) -> Result<CommandResult, String> {
-    tauri::async_runtime::spawn_blocking(move || stash_sync(repo_path))
+pub async fn stash(
+    repo_path: String,
+    message: Option<String>,
+    paths: Option<Vec<String>>,
+) -> Result<CommandResult, String> {
+    tauri::async_runtime::spawn_blocking(move || stash_sync(repo_path, message, paths))
         .await
         .map_err(|e| format!("internal error: {e}"))?
 }
 
-fn stash_sync(repo_path: String) -> Result<CommandResult, String> {
-    let command = display_command(&["stash"]);
+fn stash_sync(
+    repo_path: String,
+    message: Option<String>,
+    paths: Option<Vec<String>>,
+) -> Result<CommandResult, String> {
     let status_out = run_git(&repo_path, &["status", "--porcelain"])?;
-    let files = status_out
+    let status_lines: Vec<&str> = status_out
         .stdout
         .lines()
-        .filter(|l| !l.is_empty() && !l.starts_with("??"))
-        .count() as u32;
+        .filter(|l| !l.is_empty())
+        .collect();
+    // total changed files (tracked or not) - only for the before/after summary text, so it has
+    // to count untracked ones too now that a selection can target them specifically
+    let before_count = status_lines.len();
+    // the default "stash everything" form (no pathspec) never touches untracked files, so that's
+    // the right fallback count for how many actually got stashed when nothing was selected
+    let tracked_count = status_lines.iter().filter(|l| !l.starts_with("??")).count();
 
-    let result = run_git(&repo_path, &["stash"])?;
+    // an explicit (non-empty) pathspec restricts the stash to just those files. by itself that
+    // still never picks up an untracked file even if it's named directly - `--include-untracked`
+    // is required for that, and (confirmed against real git) stays scoped to just the pathspec's
+    // matches rather than sweeping in every other untracked file too.
+    let selected: Option<Vec<String>> = paths.filter(|p| !p.is_empty());
+
+    let mut args: Vec<String> = vec!["stash".to_string(), "push".to_string()];
+    if let Some(m) = message.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+        args.push("-m".to_string());
+        args.push(m.to_string());
+    }
+    if let Some(p) = &selected {
+        args.push("--include-untracked".to_string());
+        args.push("--".to_string());
+        args.extend(p.iter().cloned());
+    }
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let command = display_command(&arg_refs);
+
+    let result = run_git(&repo_path, &arg_refs)?;
 
     if !result.success {
         return Ok(CommandResult::failure(&command, result.stderr));
     }
 
+    let stashed_count = selected.as_ref().map_or(tracked_count, Vec::len);
+    let remaining = selected
+        .as_ref()
+        .map_or(0, |p| before_count.saturating_sub(p.len()));
+
     Ok(CommandResult::ok(
         &command,
         json!({
-            "files": files,
-            "before": format!("{files} changed file{}", if files == 1 { "" } else { "s" }),
-            "after": "working directory clean",
+            "files": stashed_count as u32,
+            "before": format!("{before_count} changed file{}", if before_count == 1 { "" } else { "s" }),
+            "after": if remaining > 0 {
+                format!("{remaining} file{} still changed", if remaining == 1 { "" } else { "s" })
+            } else {
+                "working directory clean".to_string()
+            },
         }),
     ))
 }

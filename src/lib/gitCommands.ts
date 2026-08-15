@@ -144,8 +144,18 @@ export async function push(repoPath: string): Promise<CommandResult> {
   return normalizeCommandResult(await invoke("push", { repoPath }));
 }
 
-export async function stash(repoPath: string): Promise<CommandResult> {
-  return normalizeCommandResult(await invoke("stash", { repoPath }));
+// only meant to be called after a push comes back with nonFastForward + data.rewound - i.e. the
+// branch was reset past commits still on the remote, so a plain push can never work and pulling
+// would just bring them back. uses --force-with-lease, so it still refuses if the remote moved
+// again for some other reason since gitroot last looked.
+export async function forcePush(repoPath: string): Promise<CommandResult> {
+  return normalizeCommandResult(await invoke("force_push", { repoPath }));
+}
+
+// message and paths are both optional - no message falls back to git's own "WIP on <branch>: ..."
+// label, no paths (or every changed file selected) stashes everything, same as plain `git stash`
+export async function stash(repoPath: string, message?: string, paths?: string[]): Promise<CommandResult> {
+  return normalizeCommandResult(await invoke("stash", { repoPath, message: message ?? null, paths: paths ?? null }));
 }
 
 export async function commit(repoPath: string, message: string): Promise<CommandResult> {

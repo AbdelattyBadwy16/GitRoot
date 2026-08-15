@@ -16,7 +16,15 @@
     "stepsZero": ["checked {remote}", "it already matches your branch, nothing to send"],
     "authError": "you're not logged in to push to this remote.",
     "networkError": "couldn't reach {remote}. check your network or VPN connection.",
-    "nonFastForward": "someone else pushed to {remote} since you last pulled. pull those commits in, then push again."
+    "nonFastForward": "someone else pushed to {remote} since you last pulled. pull those commits in, then push again.",
+    "nonFastForwardRewind": "{remote} still has commits you reset past. pulling would just bring them back, so force-push instead to make {remote} match your branch."
+  },
+  "forcePush": {
+    "meaning": "overwrites {remote} so it exactly matches your branch, even if that removes commits that were there.",
+    "result": "force-pushed. {remote} now matches your branch.",
+    "steps": ["checked {remote} hadn't moved for any other reason since gitroot last looked", "overwrote {remote} to match your branch exactly"],
+    "authError": "you're not logged in to push to this remote.",
+    "networkError": "couldn't reach {remote}. check your network or VPN connection."
   },
   "stash": {
     "meaning": "sets uncommitted changes aside so your working directory is clean.",

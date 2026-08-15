@@ -12,6 +12,7 @@ type DictEntry = {
   authError?: string;
   networkError?: string;
   nonFastForward?: string;
+  nonFastForwardRewind?: string;
   confirmText?: string;
   conflictPaused?: string;
   risky?: boolean;
@@ -34,7 +35,7 @@ const dict = dictionary as unknown as Record<string, DictEntry>;
 
 export type CommandName = "pull" | "push" | "stash" | "commit";
 
-export type ActionKind = CommandName | "switchBranch" | "createBranch" | "revert" | "undo" | "merge" | "rebase" | "reset" | "applyStash" | "popStash" | "dropStash";
+export type ActionKind = CommandName | "switchBranch" | "createBranch" | "revert" | "undo" | "merge" | "rebase" | "reset" | "applyStash" | "popStash" | "dropStash" | "forcePush";
 
 export type ResetMode = "soft" | "mixed" | "hard";
 
@@ -84,11 +85,11 @@ function resultText(kind: ActionKind, result: CommandResult): string {
     return fillTemplate(template, 0, result.data).replaceAll("{files}", filesList(result.data));
   }
   if (result.nonFastForward) {
-    return fillTemplate(
-      entry.nonFastForward ?? "{remote} has commits you don't have yet. pull them in first, then push again.",
-      0,
-      result.data,
-    );
+    const rewound = result.data.rewound === true;
+    const template = rewound
+      ? entry.nonFastForwardRewind ?? "{remote} still has commits you reset past. force-push to make {remote} match your branch."
+      : entry.nonFastForward ?? "{remote} has commits you don't have yet. pull them in first, then push again.";
+    return fillTemplate(template, 0, result.data);
   }
   if (!result.success) {
     return result.rawStderr?.trim() || "that command didn't succeed.";

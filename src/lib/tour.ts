@@ -8,10 +8,7 @@ export interface TourStep {
   example?: string[];
 }
 
-// stand-in history shown during the tour when the real repo has no commits yet (a brand new
-// repo) - the "graph" step's own example text talks through "5 commits, newest at the top",
-// so this is that exact story made visible, matching the same force-show-a-preview pattern
-// already used for the undo button and the merge/rebase pickers with only one branch
+
 export const TOUR_DEMO_GRAPH: CommitGraphData = {
   laneCount: 1,
   hasMore: false,

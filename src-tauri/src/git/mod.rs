@@ -172,6 +172,22 @@ pub fn looks_like_non_fast_forward_error(stderr: &str) -> bool {
         && (lower.contains("non-fast-forward") || lower.contains("fetch first"))
 }
 
+// true if `hash` is literally somewhere in HEAD's own reflog history - i.e. this branch used to
+// point at it before moving away, almost always because of a reset. distinguishes "you rewound
+// past commits you already pushed" (needs a force-push - pulling would just bring them back)
+// from "someone else pushed commits you've never had" (needs a real pull), which look identical
+// from a plain non-fast-forward push rejection alone.
+pub fn head_used_to_point_at(repo_path: &str, hash: &str) -> bool {
+    let hash = hash.trim();
+    if hash.is_empty() {
+        return false;
+    }
+    let Ok(out) = run_git(repo_path, &["reflog", "show", "--format=%H", "HEAD"]) else {
+        return false;
+    };
+    out.success && out.stdout.lines().any(|line| line.trim() == hash)
+}
+
 #[derive(Debug, Serialize)]
 pub struct RepoInfo {
     pub name: String,

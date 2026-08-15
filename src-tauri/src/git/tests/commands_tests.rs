@@ -159,7 +159,7 @@ fn stash_saves_tracked_changes_but_not_untracked() {
     repo.write("README.md", "hello\nmodified\n");
     repo.write("scratch.txt", "wip\n");
 
-    let result = stash_sync(repo.path.clone()).unwrap();
+    let result = stash_sync(repo.path.clone(), None, None).unwrap();
     assert!(result.success);
     assert_eq!(result.data["files"], 1);
 
@@ -169,6 +169,92 @@ fn stash_saves_tracked_changes_but_not_untracked() {
 
     let stash_list = repo.git(&["stash", "list"]);
     assert_eq!(stash_list.stdout.lines().count(), 1);
+}
+
+#[test]
+fn stash_with_a_custom_message_labels_the_entry() {
+    let repo = TestRepo::new();
+    repo.write("README.md", "hello\nmodified\n");
+
+    let result = stash_sync(
+        repo.path.clone(),
+        Some("wip: refactor auth".to_string()),
+        None,
+    )
+    .unwrap();
+    assert!(result.success, "stderr: {:?}", result.raw_stderr);
+
+    let stashes = list_stashes_sync(repo.path.clone()).unwrap();
+    assert_eq!(stashes.len(), 1);
+    assert!(
+        stashes[0].message.contains("wip: refactor auth"),
+        "expected the custom message in {:?}",
+        stashes[0]
+    );
+}
+
+#[test]
+fn stash_with_a_blank_message_falls_back_to_gits_default_labeling() {
+    let repo = TestRepo::new();
+    repo.write("README.md", "hello\nmodified\n");
+
+    // whitespace-only should be treated the same as "no message" instead of literally passing
+    // "   " to `-m`
+    let result = stash_sync(repo.path.clone(), Some("   ".to_string()), None).unwrap();
+    assert!(result.success, "stderr: {:?}", result.raw_stderr);
+    assert_eq!(result.command, "git stash push");
+}
+
+#[test]
+fn stash_with_specific_paths_only_stashes_those_files_leaving_the_rest() {
+    let repo = TestRepo::new();
+    repo.write("README.md", "hello\nchanged\n");
+    repo.commit_new_file("other.txt", "1\n", "add other");
+    repo.write("other.txt", "2\n");
+
+    let result = stash_sync(repo.path.clone(), None, Some(vec!["README.md".to_string()])).unwrap();
+    assert!(result.success, "stderr: {:?}", result.raw_stderr);
+    assert_eq!(result.data["files"], 1);
+
+    let status = repo.git(&["status", "--porcelain"]);
+    assert!(
+        !status.stdout.contains("README.md"),
+        "README.md should have been stashed away: {}",
+        status.stdout
+    );
+    assert!(
+        status.stdout.contains("other.txt"),
+        "other.txt's change should be left alone: {}",
+        status.stdout
+    );
+}
+
+#[test]
+fn stash_can_target_a_specific_untracked_file_when_selected() {
+    let repo = TestRepo::new();
+    repo.write("new-file.txt", "brand new\n");
+    repo.write("other-new-file.txt", "also new\n");
+
+    let result = stash_sync(
+        repo.path.clone(),
+        None,
+        Some(vec!["new-file.txt".to_string()]),
+    )
+    .unwrap();
+    assert!(result.success, "stderr: {:?}", result.raw_stderr);
+
+    assert!(
+        !std::path::Path::new(&repo.path)
+            .join("new-file.txt")
+            .exists(),
+        "the selected untracked file should have been stashed away"
+    );
+    assert!(
+        std::path::Path::new(&repo.path)
+            .join("other-new-file.txt")
+            .exists(),
+        "an untracked file that wasn't selected should be left alone"
+    );
 }
 
 #[test]
@@ -450,6 +536,61 @@ fn push_reports_non_fast_forward_instead_of_gits_raw_rejected_refs_text() {
     assert!(
         push_result.raw_stderr.is_none(),
         "should be a friendly classification, not raw stderr"
+    );
+    assert_eq!(
+        push_result.data["rewound"], false,
+        "this is a stranger's brand new commit, not something repo_a ever had and reset away from"
+    );
+}
+
+#[test]
+fn push_after_resetting_past_pushed_commits_is_reported_as_a_rewind_not_a_stranger_s_push() {
+    let repo = TestRepo::new();
+    repo.commit_new_file("from-a.txt", "hi\n", "from a");
+    let pushed = push_sync(repo.path.clone()).unwrap();
+    assert!(pushed.success, "stderr: {:?}", pushed.raw_stderr);
+
+    // reset back to before that commit - it's still local history exactly like the "reset to
+    // this commit" feature in the app would do - while the remote still has it.
+    repo.git(&["reset", "--hard", "HEAD~1"]);
+
+    let push_result = push_sync(repo.path.clone()).unwrap();
+    assert!(!push_result.success);
+    assert!(push_result.non_fast_forward);
+    assert_eq!(
+        push_result.data["rewound"], true,
+        "the remote's tip used to be repo's own HEAD, so this should be recognized as a rewind: {push_result:?}"
+    );
+}
+
+#[test]
+fn force_push_makes_the_remote_match_a_branch_that_was_reset_backward() {
+    let repo = TestRepo::new();
+    repo.commit_new_file("from-a.txt", "hi\n", "from a");
+    let pushed = push_sync(repo.path.clone()).unwrap();
+    assert!(pushed.success, "stderr: {:?}", pushed.raw_stderr);
+    let earlier_head = repo.git(&["rev-parse", "HEAD~1"]).stdout.trim().to_string();
+
+    repo.git(&["reset", "--hard", "HEAD~1"]);
+    let rejected = push_sync(repo.path.clone()).unwrap();
+    assert!(
+        !rejected.success,
+        "a plain push should still be rejected here"
+    );
+
+    let forced = force_push_sync(repo.path.clone()).unwrap();
+    assert!(forced.success, "stderr: {:?}", forced.raw_stderr);
+
+    let remote_tip = repo
+        .git(&["ls-remote", "origin", "refs/heads/main"])
+        .stdout
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    assert_eq!(
+        remote_tip, earlier_head,
+        "the remote should now match the branch after it was reset backward"
     );
 }
 
@@ -1289,7 +1430,9 @@ fn recognizes_unreachable_remote_as_network_not_auth() {
     assert!(looks_like_network_error(stderr));
     assert!(!looks_like_auth_error(stderr));
 
-    let result = CommandResult::from_remote_failure("git pull", stderr.to_string(), "origin/main");
+    // network/auth classification never touches repo_path, so an unused placeholder is fine here
+    let result =
+        CommandResult::from_remote_failure("", "git pull", stderr.to_string(), "origin/main");
     assert!(!result.success);
     assert!(result.network_error);
     assert!(!result.auth_error);
@@ -1430,7 +1573,7 @@ fn stash_pop_brings_back_what_stash_set_aside() {
     let repo = TestRepo::new();
     repo.write("README.md", "hello\nmodified\n");
 
-    assert!(stash_sync(repo.path.clone()).unwrap().success);
+    assert!(stash_sync(repo.path.clone(), None, None).unwrap().success);
     assert!(
         repo.git(&["status", "--porcelain"]).stdout.is_empty(),
         "working tree should be clean after stash"
@@ -1454,11 +1597,11 @@ fn stash_pop_brings_back_what_stash_set_aside() {
 fn list_stashes_reports_every_entry_newest_first_with_branch_parsed_out() {
     let repo = TestRepo::new(); // starts on "main"
     repo.write("README.md", "hello\nfirst change\n");
-    assert!(stash_sync(repo.path.clone()).unwrap().success);
+    assert!(stash_sync(repo.path.clone(), None, None).unwrap().success);
 
     repo.git(&["checkout", "-q", "-b", "feature"]);
     repo.write("README.md", "hello\nsecond change\n");
-    assert!(stash_sync(repo.path.clone()).unwrap().success);
+    assert!(stash_sync(repo.path.clone(), None, None).unwrap().success);
 
     let stashes = list_stashes_sync(repo.path.clone()).unwrap();
     assert_eq!(stashes.len(), 2, "{stashes:?}");
@@ -1478,7 +1621,7 @@ fn list_stashes_is_empty_for_a_repo_with_no_stashes() {
 fn apply_stash_keeps_the_entry_so_it_can_still_be_dropped_later() {
     let repo = TestRepo::new();
     repo.write("README.md", "hello\nchanged\n");
-    assert!(stash_sync(repo.path.clone()).unwrap().success);
+    assert!(stash_sync(repo.path.clone(), None, None).unwrap().success);
 
     let result = apply_stash_sync(repo.path.clone(), "stash@{0}".to_string()).unwrap();
     assert!(result.success);
@@ -1498,9 +1641,9 @@ fn pop_stash_targets_a_specific_entry_not_just_the_top_of_the_stack() {
     // plain `git stash` only picks up tracked changes, so both entries need to
     // touch files git already knows about (README.md from TestRepo::new, b.txt here)
     repo.write("README.md", "hello\nfirst change\n");
-    assert!(stash_sync(repo.path.clone()).unwrap().success); // becomes stash@{0}, then {1}
+    assert!(stash_sync(repo.path.clone(), None, None).unwrap().success); // becomes stash@{0}, then {1}
     repo.write("b.txt", "2\n");
-    assert!(stash_sync(repo.path.clone()).unwrap().success); // stash@{0}, pushes README's to {1}
+    assert!(stash_sync(repo.path.clone(), None, None).unwrap().success); // stash@{0}, pushes README's to {1}
 
     // pop the OLDER entry (now stash@{1}), the newer one (stash@{0}) should be untouched
     let result = pop_stash_sync(repo.path.clone(), "stash@{1}".to_string()).unwrap();
@@ -1521,9 +1664,9 @@ fn drop_stash_removes_only_the_targeted_entry() {
     let repo = TestRepo::new();
     repo.commit_new_file("b.txt", "1\n", "add b.txt");
     repo.write("README.md", "hello\nfirst change\n");
-    assert!(stash_sync(repo.path.clone()).unwrap().success);
+    assert!(stash_sync(repo.path.clone(), None, None).unwrap().success);
     repo.write("b.txt", "2\n");
-    assert!(stash_sync(repo.path.clone()).unwrap().success);
+    assert!(stash_sync(repo.path.clone(), None, None).unwrap().success);
 
     let result = drop_stash_sync(repo.path.clone(), "stash@{1}".to_string()).unwrap();
     assert!(result.success, "{:?}", result.raw_stderr);
@@ -1559,7 +1702,7 @@ fn list_stashes_parses_a_custom_message_given_via_stash_push_dash_m() {
 fn drop_stash_fails_gracefully_for_an_out_of_range_ref_instead_of_panicking() {
     let repo = TestRepo::new();
     repo.write("README.md", "hello\nchanged\n");
-    assert!(stash_sync(repo.path.clone()).unwrap().success);
+    assert!(stash_sync(repo.path.clone(), None, None).unwrap().success);
 
     let result = drop_stash_sync(repo.path.clone(), "stash@{5}".to_string()).unwrap();
     assert!(!result.success);
@@ -1580,7 +1723,7 @@ fn pop_stash_fails_gracefully_when_the_stash_list_is_empty() {
 fn apply_stash_fails_gracefully_instead_of_panicking_when_it_would_conflict() {
     let repo = TestRepo::new();
     repo.write("README.md", "hello\nstashed change\n");
-    assert!(stash_sync(repo.path.clone()).unwrap().success);
+    assert!(stash_sync(repo.path.clone(), None, None).unwrap().success);
     // make the working tree conflict with what the stash would restore
     repo.write("README.md", "hello\na completely different local change\n");
 
@@ -1598,7 +1741,7 @@ fn apply_stash_fails_gracefully_instead_of_panicking_when_it_would_conflict() {
 fn apply_stash_can_be_reapplied_since_it_does_not_consume_the_entry() {
     let repo = TestRepo::new();
     repo.write("README.md", "hello\nchanged\n");
-    assert!(stash_sync(repo.path.clone()).unwrap().success);
+    assert!(stash_sync(repo.path.clone(), None, None).unwrap().success);
 
     let first = apply_stash_sync(repo.path.clone(), "stash@{0}".to_string()).unwrap();
     assert!(first.success, "{:?}", first.raw_stderr);
@@ -1618,7 +1761,7 @@ fn apply_stash_can_be_reapplied_since_it_does_not_consume_the_entry() {
 fn stash_commands_reject_an_empty_ref_without_panicking() {
     let repo = TestRepo::new();
     repo.write("README.md", "hello\nchanged\n");
-    assert!(stash_sync(repo.path.clone()).unwrap().success);
+    assert!(stash_sync(repo.path.clone(), None, None).unwrap().success);
 
     assert!(
         !apply_stash_sync(repo.path.clone(), "".to_string())

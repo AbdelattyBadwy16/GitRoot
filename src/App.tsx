@@ -13,6 +13,7 @@ import HunkEditor from "./components/HunkEditor";
 import ConfirmDialog from "./components/ConfirmDialog";
 import ConflictDialog from "./components/ConflictDialog";
 import ResetDialog from "./components/ResetDialog";
+import StashDialog from "./components/StashDialog";
 import GitIdentityPrompt from "./components/GitIdentityPrompt";
 import TourOverlay from "./components/TourOverlay";
 import WelcomeTourPrompt from "./components/WelcomeTourPrompt";
@@ -29,6 +30,7 @@ import {
   cloneRepo,
   pull,
   push,
+  forcePush,
   stash,
   commit as commitFn,
   getStatus,
@@ -91,6 +93,11 @@ export default function App() {
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [stashes, setStashes] = useState<StashInfo[]>([]);
   const [hunkEditorFile, setHunkEditorFile] = useState<string | null>(null);
+  // set when a push is rejected because the branch was reset past commits still on the remote -
+  // a plain push can't fix that (and pulling would just bring them back), so this offers a
+  // force-push instead, with the confirm dialog making clear that's a real, remote-visible rewrite
+  const [forcePushPrompt, setForcePushPrompt] = useState<{ remote: string } | null>(null);
+  const [stashDialogOpen, setStashDialogOpen] = useState(false);
   const [gitAvailable, setGitAvailable] = useState<boolean | null>(null);
   const [gitIdentity, setGitIdentity] = useState<GitIdentity | null>(null);
   const [showTourPrompt, setShowTourPrompt] = useState(false);
@@ -308,9 +315,15 @@ export default function App() {
 
   async function runCommand(name: Exclude<CommandName, "commit">) {
     if (!repo) return;
+    // stash needs a message + which-files picker, so it opens a dialog instead of running
+    // immediately like pull/push do
+    if (name === "stash") {
+      setStashDialogOpen(true);
+      return;
+    }
     setBusy(name);
     try {
-      const fn = { pull, push, stash }[name];
+      const fn = { pull, push }[name];
       const result = await fn(repo.path);
       if (result.conflict) {
         const target = String(result.data.target ?? "the remote");
@@ -320,9 +333,41 @@ export default function App() {
         return;
       }
       const details = applyResult(name, result);
+      if (name === "push" && result.nonFastForward && result.data.rewound === true) {
+        setForcePushPrompt({ remote: String(result.data.remote ?? "the remote") });
+      }
       if (!details.isError) recordUndo(computeUndo(name, result));
       const g = await refresh(repo.path);
-      if (!details.isError && name !== "stash") pulseHead(g);
+      if (!details.isError) pulseHead(g);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleStash(message: string, paths: string[] | null) {
+    if (!repo) return;
+    setStashDialogOpen(false);
+    setBusy("stash");
+    try {
+      const result = await stash(repo.path, message, paths ?? undefined);
+      const details = applyResult("stash", result);
+      if (!details.isError) recordUndo(computeUndo("stash", result));
+      await refresh(repo.path);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleForcePush() {
+    if (!repo) return;
+    setForcePushPrompt(null);
+    setBusy("forcePush");
+    try {
+      const result = await forcePush(repo.path);
+      const details = applyResult("forcePush", result);
+      if (!details.isError) recordUndo(computeUndo("push", result));
+      const g = await refresh(repo.path);
+      if (!details.isError) pulseHead(g);
     } finally {
       setBusy(null);
     }
@@ -874,6 +919,12 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {stashDialogOpen && (
+          <StashDialog files={files} busy={busy === "stash"} onCancel={() => setStashDialogOpen(false)} onConfirm={handleStash} />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {dropStashTarget && (
           <ConfirmDialog
             title="drop this stash?"
@@ -882,6 +933,19 @@ export default function App() {
             onConfirm={confirmDropStash}
             onCancel={() => setDropStashTarget(null)}
             busy={busy === "dropStash"}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {forcePushPrompt && (
+          <ConfirmDialog
+            title="force push instead?"
+            message={`${forcePushPrompt.remote} still has commits you reset past - a normal push can't work here, and pulling would just bring them back. force-pushing makes ${forcePushPrompt.remote} match your branch exactly. anyone else who has those commits will need to reset their own copy too. continue?`}
+            confirmLabel="force push"
+            onConfirm={handleForcePush}
+            onCancel={() => setForcePushPrompt(null)}
+            busy={busy === "forcePush"}
           />
         )}
       </AnimatePresence>
