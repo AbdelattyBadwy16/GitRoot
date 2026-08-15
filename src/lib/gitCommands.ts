@@ -19,6 +19,7 @@ export interface CommandResult {
   authError: boolean;
   networkError: boolean;
   conflict: boolean;
+  nonFastForward: boolean;
   rawStderr: string | null;
   data: Record<string, unknown>;
   command: string;
@@ -79,6 +80,7 @@ function normalizeCommandResult(raw: any): CommandResult {
     authError: raw.auth_error,
     networkError: raw.network_error,
     conflict: raw.conflict,
+    nonFastForward: raw.non_fast_forward,
     rawStderr: raw.raw_stderr,
     data: raw.data ?? {},
     command: raw.command,
@@ -195,11 +197,15 @@ export async function revertToCommit(repoPath: string, target: string): Promise<
 export interface FileHunksResult {
   hunks: string[];
   wholeFileOnly: boolean;
+  // true if there was nothing unstaged to show, so these are the staged hunks instead (e.g.
+  // right after undoing a commit, which leaves everything staged) - "unstage" applies, not
+  // "stage"/"discard"
+  staged: boolean;
 }
 
 export async function getFileHunks(repoPath: string, path: string): Promise<FileHunksResult> {
   const raw: any = await invoke("file_hunks", { repoPath, path });
-  return { hunks: raw.hunks, wholeFileOnly: raw.whole_file_only };
+  return { hunks: raw.hunks, wholeFileOnly: raw.whole_file_only, staged: raw.staged };
 }
 
 export async function stageHunkLines(repoPath: string, path: string, hunkIndex: number, lines: number[]): Promise<void> {
@@ -208,6 +214,10 @@ export async function stageHunkLines(repoPath: string, path: string, hunkIndex: 
 
 export async function discardHunkLines(repoPath: string, path: string, hunkIndex: number, lines: number[]): Promise<void> {
   await invoke("discard_hunk_lines", { repoPath, path, hunkIndex, lines });
+}
+
+export async function unstageHunkLines(repoPath: string, path: string, hunkIndex: number, lines: number[]): Promise<void> {
+  await invoke("unstage_hunk_lines", { repoPath, path, hunkIndex, lines });
 }
 
 export async function getCommitGraph(repoPath: string, limit: number): Promise<CommitGraphData> {
@@ -385,6 +395,12 @@ export async function abortRebase(repoPath: string): Promise<void> {
 
 export async function getConflictedFiles(repoPath: string): Promise<string[]> {
   return invoke("conflicted_files", { repoPath });
+}
+
+// true if the file on disk still has git's own `<<<<<<<`/`=======`/`>>>>>>>` conflict markers in
+// it - warns before staging something someone saved without actually finishing the resolve
+export async function hasConflictMarkers(repoPath: string, path: string): Promise<boolean> {
+  return invoke("has_conflict_markers", { repoPath, path });
 }
 
 export async function continueRevert(repoPath: string): Promise<CommandResult> {

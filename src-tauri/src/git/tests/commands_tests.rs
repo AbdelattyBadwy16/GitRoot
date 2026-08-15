@@ -187,6 +187,144 @@ fn pull_reports_zero_when_already_up_to_date() {
 }
 
 #[test]
+fn pull_auto_links_upstream_and_succeeds_instead_of_surfacing_gits_raw_error() {
+    let repo = TestRepo::new();
+    // simulate a branch that was never linked to a remote-tracking branch - a fresh
+    // `git init` + `git remote add` + push, or a branch created without --track
+    repo.git(&["branch", "--unset-upstream"]);
+    assert!(
+        !run_git(
+            &repo.path,
+            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
+        )
+        .unwrap()
+        .success,
+        "test setup: branch should have no upstream at this point"
+    );
+
+    // push a commit from a second clone so pull actually has something real to bring in
+    let clone_dir = repo.dir.join("other-clone");
+    let out = std::process::Command::new("git")
+        .args([
+            "clone",
+            "-q",
+            repo.dir.join("remote.git").to_str().unwrap(),
+            clone_dir.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let other_path = clone_dir.to_string_lossy().to_string();
+    for args in [
+        vec!["config", "user.email", "b@example.com"],
+        vec!["config", "user.name", "B"],
+    ] {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&other_path)
+            .args(args)
+            .output()
+            .unwrap();
+    }
+    std::fs::write(clone_dir.join("from-other.txt"), "hi\n").unwrap();
+    for args in [
+        vec!["add", "from-other.txt"],
+        vec!["commit", "-q", "-m", "from other clone"],
+        vec!["push", "-q"],
+    ] {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&other_path)
+            .args(args)
+            .output()
+            .unwrap();
+    }
+
+    let result = pull_sync(repo.path.clone()).unwrap();
+    assert!(result.success, "{:?}", result.raw_stderr);
+    assert_eq!(result.data["commits"], 1);
+    assert!(
+        std::path::Path::new(&repo.path)
+            .join("from-other.txt")
+            .exists(),
+        "the pulled commit's file should actually be in the working tree"
+    );
+
+    // and the branch should now be linked, so a second pull would not need to redo this
+    let upstream = run_git(
+        &repo.path,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )
+    .unwrap();
+    assert!(upstream.success);
+    assert_eq!(upstream.stdout.trim(), "origin/main");
+}
+
+#[test]
+fn pull_succeeds_on_a_brand_new_local_branch_with_zero_commits_yet() {
+    // the real-world case that broke: create a repo on the remote with real history, then
+    // locally `git init` + `git remote add origin ...` and hit pull before ever making a
+    // local commit. `branch --set-upstream-to` alone cannot fix this - the local branch is
+    // not a real ref until it has a commit - unlike the "has commits, just untracked" case
+    // covered above, so this needs its own test.
+    let seed = TestRepo::new();
+
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let local_dir = seed.dir.join(format!("unborn-local-{n}"));
+    std::fs::create_dir_all(&local_dir).unwrap();
+    let local_path = local_dir.to_string_lossy().to_string();
+
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&local_dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    run(&["init", "-q", "-b", "main"]);
+    run(&["config", "user.email", "u@example.com"]);
+    run(&["config", "user.name", "U"]);
+    run(&[
+        "remote",
+        "add",
+        "origin",
+        seed.dir.join("remote.git").to_str().unwrap(),
+    ]);
+
+    assert!(
+        !run_git(&local_path, &["log"]).unwrap().success,
+        "test setup: local branch should have zero commits at this point"
+    );
+
+    let result = pull_sync(local_path.clone()).unwrap();
+    assert!(result.success, "{:?}", result.raw_stderr);
+
+    let log_after = run_git(&local_path, &["log", "--oneline"]).unwrap();
+    assert!(log_after.success);
+    assert_eq!(
+        log_after.stdout.lines().count(),
+        1,
+        "should have pulled the remote's one commit"
+    );
+
+    let upstream = run_git(
+        &local_path,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )
+    .unwrap();
+    assert!(upstream.success, "should be linked for next time too");
+    assert_eq!(upstream.stdout.trim(), "origin/main");
+}
+
+#[test]
 fn push_then_pull_round_trip_reports_real_commit_counts() {
     let repo_a = TestRepo::new();
 
@@ -250,6 +388,69 @@ fn push_then_pull_round_trip_reports_real_commit_counts() {
     assert_ne!(push_result.data["before"], push_result.data["after"]);
     let local_head = short_hash(&repo_a.git(&["rev-parse", "HEAD"]).stdout);
     assert_eq!(push_result.data["after"], local_head);
+}
+
+#[test]
+fn push_reports_non_fast_forward_instead_of_gits_raw_rejected_refs_text() {
+    let repo_a = TestRepo::new();
+
+    // a collaborator pushes a commit repo_a doesn't know about yet - unrelated file, so this
+    // isn't a content conflict, just a diverged/behind remote.
+    let clone_dir = repo_a.dir.join("repo-b");
+    let out = std::process::Command::new("git")
+        .args([
+            "clone",
+            "-q",
+            repo_a.dir.join("remote.git").to_str().unwrap(),
+            clone_dir.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let repo_b_path = clone_dir.to_string_lossy().to_string();
+    for args in [
+        ["config", "user.email", "b@example.com"],
+        ["config", "user.name", "B"],
+    ] {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo_b_path)
+            .args(args)
+            .output()
+            .unwrap();
+    }
+    std::fs::write(clone_dir.join("from-b.txt"), "hi\n").unwrap();
+    for args in [
+        vec!["add", "from-b.txt"],
+        vec!["commit", "-q", "-m", "from b"],
+        vec!["push", "-q"],
+    ] {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo_b_path)
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    }
+
+    // repo_a commits locally *without* pulling first, then tries to push straight into a remote
+    // that's moved on - the classic "! [rejected] ... (non-fast-forward)" case.
+    repo_a.commit_new_file("from-a.txt", "hi\n", "from a");
+
+    let push_result = push_sync(repo_a.path.clone()).unwrap();
+    assert!(!push_result.success);
+    assert!(
+        push_result.non_fast_forward,
+        "expected non_fast_forward, got {push_result:?}"
+    );
+    assert!(!push_result.auth_error);
+    assert!(!push_result.network_error);
+    assert!(!push_result.conflict);
+    assert!(
+        push_result.raw_stderr.is_none(),
+        "should be a friendly classification, not raw stderr"
+    );
 }
 
 fn push_conflicting_readme_edit_from_a_collaborator(repo: &TestRepo) {
@@ -700,13 +901,17 @@ fn stage_hunk_and_discard_hunk_operate_independently() {
 
     apply_one_hunk(&repo.path, "f.txt", 0, &["apply", "--reverse"]).unwrap();
 
-    let after_discard = file_hunks_sync(repo.path.clone(), "f.txt".to_string())
-        .unwrap()
-        .hunks;
+    // nothing unstaged left (line18-CHANGED just got discarded) - but line2-CHANGED is
+    // still sitting staged from earlier, so this should fall back to showing that instead
+    // of a dead end
+    let after_discard = file_hunks_sync(repo.path.clone(), "f.txt".to_string()).unwrap();
     assert!(
-        after_discard.is_empty(),
-        "discarded hunk should leave nothing unstaged: {after_discard:?}"
+        after_discard.staged,
+        "nothing unstaged left, but line2-CHANGED is still staged: {:?}",
+        after_discard.hunks
     );
+    assert_eq!(after_discard.hunks.len(), 1);
+    assert!(after_discard.hunks[0].contains("line2-CHANGED"));
 
     let content = std::fs::read_to_string(repo.dir.join("repo").join("f.txt")).unwrap();
     assert!(content.contains("line2-CHANGED"));
@@ -776,6 +981,7 @@ fn stage_hunk_lines_stages_only_the_selected_lines_within_one_hunk() {
         &selected,
         false,
         &["apply", "--cached", "--recount"],
+        false,
     )
     .unwrap();
 
@@ -819,6 +1025,7 @@ fn discard_hunk_lines_removes_only_the_selected_lines_from_the_working_tree() {
         &selected,
         true,
         &["apply", "--reverse", "--recount"],
+        false,
     )
     .unwrap();
 
@@ -847,6 +1054,7 @@ fn stage_hunk_lines_splits_a_brand_new_file_into_chosen_lines() {
         &selected,
         false,
         &["apply", "--cached", "--recount"],
+        false,
     )
     .unwrap();
 
@@ -879,6 +1087,7 @@ fn selecting_zero_lines_fails_clearly_instead_of_applying_an_empty_patch() {
         &empty,
         false,
         &["apply", "--cached", "--recount"],
+        false,
     )
     .unwrap_err();
     assert!(err.contains("select at least one line"), "error was: {err}");
@@ -901,6 +1110,102 @@ fn a_changed_binary_file_reports_whole_file_only_instead_of_looking_clean() {
     assert!(
         result.whole_file_only,
         "the file really did change — this must not look like a clean file"
+    );
+}
+
+#[test]
+fn file_hunks_falls_back_to_staged_content_after_undoing_a_commit() {
+    // the real repro: commit a file, then undo the commit (soft reset - keeps everything
+    // staged). the unstaged diff is empty, so file_hunks must fall back to the staged one
+    // instead of coming back empty.
+    let repo = TestRepo::new();
+    repo.write("f.txt", "a\nb\nc\n");
+    stage_file_sync(repo.path.clone(), "f.txt".to_string()).unwrap();
+    let before_commit = short_hash(&repo.git(&["rev-parse", "HEAD"]).stdout);
+    assert!(
+        commit_sync(repo.path.clone(), "add f".to_string())
+            .unwrap()
+            .success
+    );
+
+    let undo = uncommit_to_sync(repo.path.clone(), before_commit).unwrap();
+    assert!(undo.success);
+
+    // confirm the setup: nothing unstaged, everything staged
+    assert!(run_git(&repo.path, &["diff", "--", "f.txt"])
+        .unwrap()
+        .stdout
+        .trim()
+        .is_empty());
+    assert!(!run_git(&repo.path, &["diff", "--cached", "--", "f.txt"])
+        .unwrap()
+        .stdout
+        .trim()
+        .is_empty());
+
+    let result = file_hunks_sync(repo.path.clone(), "f.txt".to_string()).unwrap();
+    assert!(result.staged, "should have fallen back to the staged diff");
+    assert_eq!(result.hunks.len(), 1);
+    assert!(result.hunks[0].contains("+a") || result.hunks[0].contains("a\n"));
+}
+
+#[test]
+fn unstage_hunk_lines_removes_only_selected_lines_from_the_index() {
+    let repo = TestRepo::new();
+    repo.write("f.txt", "a\nb\nc\n");
+    stage_file_sync(repo.path.clone(), "f.txt".to_string()).unwrap();
+    commit_sync(repo.path.clone(), "add f".to_string()).unwrap();
+    // capture HEAD *after* the first commit - undoing should only rewind the second one,
+    // leaving "a\nb\nc\n" as the committed base (a real modify-diff), not erase f.txt entirely
+    let before_second_commit = short_hash(&repo.git(&["rev-parse", "HEAD"]).stdout);
+    repo.write("f.txt", "a\nNEW1\nNEW2\nb\nc\n");
+    stage_file_sync(repo.path.clone(), "f.txt".to_string()).unwrap();
+    commit_sync(repo.path.clone(), "add NEW1 and NEW2".to_string()).unwrap();
+    uncommit_to_sync(repo.path.clone(), before_second_commit).unwrap();
+
+    let result = file_hunks_sync(repo.path.clone(), "f.txt".to_string()).unwrap();
+    assert!(result.staged);
+    assert_eq!(result.hunks.len(), 1);
+    let hunk = &result.hunks[0];
+    assert_eq!(hunk.lines().nth(2).unwrap(), "+NEW1");
+    assert_eq!(hunk.lines().nth(3).unwrap(), "+NEW2");
+
+    // unstage just NEW1 (index 2)
+    let selected: HashSet<usize> = [2].into_iter().collect();
+    apply_selected_hunk_lines(
+        &repo.path,
+        "f.txt",
+        0,
+        &selected,
+        true,
+        &["apply", "--cached", "--reverse", "--recount"],
+        true,
+    )
+    .unwrap();
+
+    let staged = run_git(&repo.path, &["diff", "--cached", "--", "f.txt"]).unwrap();
+    assert!(
+        !staged.stdout.contains("NEW1"),
+        "NEW1 should be unstaged now: {}",
+        staged.stdout
+    );
+    assert!(
+        staged.stdout.contains("+NEW2"),
+        "NEW2 should still be staged: {}",
+        staged.stdout
+    );
+
+    // and the working tree must be untouched - this is unstage, not discard
+    let content = std::fs::read_to_string(repo.dir.join("repo").join("f.txt")).unwrap();
+    assert_eq!(
+        content, "a\nNEW1\nNEW2\nb\nc\n",
+        "unstaging must not touch the working tree"
+    );
+    let unstaged = run_git(&repo.path, &["diff", "--", "f.txt"]).unwrap();
+    assert!(
+        unstaged.stdout.contains("NEW1"),
+        "NEW1 should show back up as unstaged: {}",
+        unstaged.stdout
     );
 }
 
@@ -1522,6 +1827,30 @@ fn merge_branch_pauses_on_conflict_and_continue_merge_finishes_it_once_resolved(
         parents.trim().split(' ').count(),
         3,
         "a real merge commit has two parents"
+    );
+}
+
+#[test]
+fn has_conflict_markers_warns_about_a_file_someone_saved_without_actually_resolving_it() {
+    let repo = TestRepo::new();
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    repo.write("README.md", "feature version\n");
+    repo.git(&["commit", "-q", "-am", "conflicting change on feature"]);
+    repo.git(&["checkout", "-q", "main"]);
+    repo.write("README.md", "main version\n");
+    repo.git(&["commit", "-q", "-am", "conflicting change on main"]);
+
+    let result = merge_branch_sync(repo.path.clone(), "feature".to_string()).unwrap();
+    assert!(result.conflict);
+
+    // git leaves the real conflict markers in the working tree - exactly what a beginner might
+    // save without noticing and stage as-is
+    assert!(has_conflict_markers_sync(&repo.path, "README.md"));
+
+    repo.write("README.md", "resolved, markers removed\n");
+    assert!(
+        !has_conflict_markers_sync(&repo.path, "README.md"),
+        "should stop warning once the markers are actually gone"
     );
 }
 

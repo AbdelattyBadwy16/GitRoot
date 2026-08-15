@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import type { BranchInfo } from "../lib/gitCommands";
+import { invalidBranchNameReason } from "../lib/branchName";
 
 // each branch row is 10px top/bottom padding plus its content, this is the real rendered height
 const BRANCH_ROW_HEIGHT = 41;
@@ -33,10 +34,13 @@ export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPick
   const [startPointTouched, setStartPointTouched] = useState(false);
   const effectiveStartPoint = startPointTouched ? startPoint : current;
 
+  const trimmedName = newName.trim();
+  const nameError = trimmedName ? invalidBranchNameReason(trimmedName) : null;
+  const canSubmit = !busy && !!trimmedName && !nameError;
+
   function submitCreate() {
-    const name = newName.trim();
-    if (!name || busy) return;
-    onCreate(name, effectiveStartPoint);
+    if (!canSubmit) return;
+    onCreate(trimmedName, effectiveStartPoint);
     setNewName("");
     setStartPointTouched(false);
   }
@@ -121,7 +125,7 @@ export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPick
               flex: 1,
               padding: "8px 10px",
               borderRadius: 8,
-              border: "1px solid var(--border)",
+              border: `1px solid ${nameError ? "var(--danger)" : "var(--border)"}`,
               background: "var(--surface-0)",
               color: "var(--text-primary)",
               fontSize: 13,
@@ -129,6 +133,9 @@ export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPick
             }}
           />
         </div>
+        {nameError && (
+          <div style={{ margin: "-2px 0 10px", fontSize: 11.5, color: "var(--danger)" }}>{nameError}</div>
+        )}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 12.5, color: "var(--text-secondary)" }}>
           <span>starting from</span>
           <select
@@ -158,9 +165,9 @@ export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPick
         </div>
         <motion.button
           onClick={submitCreate}
-          disabled={busy || !newName.trim()}
-          whileHover={busy || !newName.trim() ? undefined : { scale: 1.02 }}
-          whileTap={busy || !newName.trim() ? undefined : { scale: 0.98 }}
+          disabled={!canSubmit}
+          whileHover={!canSubmit ? undefined : { scale: 1.02 }}
+          whileTap={!canSubmit ? undefined : { scale: 0.98 }}
           style={{
             padding: "8px 16px",
             borderRadius: 8,
@@ -169,8 +176,8 @@ export default function BranchesTab({ branches, onSwitch, onCreate, busy, onPick
             color: "#fff",
             fontSize: 13,
             fontWeight: 600,
-            cursor: busy || !newName.trim() ? "default" : "pointer",
-            opacity: busy || !newName.trim() ? 0.5 : 1,
+            cursor: !canSubmit ? "default" : "pointer",
+            opacity: !canSubmit ? 0.5 : 1,
           }}
         >
           create &amp; switch
