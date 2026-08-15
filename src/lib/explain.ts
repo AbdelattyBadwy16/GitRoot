@@ -103,7 +103,17 @@ function resultText(kind: ActionKind, result: CommandResult): string {
     return fillTemplate(entry.resultFastForward, n, result.data);
   }
   const template = (n === 0 && entry.resultZero ? entry.resultZero : entry.result) ?? "done.";
-  return fillTemplate(template, n, result.data);
+  const base = fillTemplate(template, n, result.data);
+
+  if (kind === "switchBranch") {
+    const carried = Number(result.data.carriedOverUncommitted ?? 0);
+    if (carried > 0) {
+      const from = String(result.data.before ?? "the branch you were on");
+      return `${base} heads up: ${carried} uncommitted file${carried === 1 ? "" : "s"} weren't specific to ${from}, so they came along with you.`;
+    }
+  }
+
+  return base;
 }
 
 function stepsFor(kind: ActionKind, result: CommandResult): string[] {

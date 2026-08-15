@@ -900,6 +900,37 @@ fn switch_branch_fails_safely_instead_of_discarding_uncommitted_changes() {
 }
 
 #[test]
+fn switch_branch_reports_uncommitted_changes_that_are_about_to_silently_come_along() {
+    let repo = TestRepo::new();
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    repo.write("README.md", "an edit that was never committed\n");
+
+    let result = switch_branch_sync(repo.path.clone(), "main".to_string()).unwrap();
+    assert!(result.success, "stderr: {:?}", result.raw_stderr);
+    assert_eq!(
+        result.data["carriedOverUncommitted"], 1,
+        "the one uncommitted file should be flagged: {result:?}"
+    );
+
+    let status = repo.git(&["status", "--porcelain"]);
+    assert!(
+        status.stdout.contains("README.md"),
+        "the uncommitted edit really did follow to main: {}",
+        status.stdout
+    );
+}
+
+#[test]
+fn switch_branch_reports_zero_carried_over_when_the_working_tree_was_already_clean() {
+    let repo = TestRepo::new();
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+
+    let result = switch_branch_sync(repo.path.clone(), "main".to_string()).unwrap();
+    assert!(result.success, "stderr: {:?}", result.raw_stderr);
+    assert_eq!(result.data["carriedOverUncommitted"], 0);
+}
+
+#[test]
 fn create_branch_creates_and_switches_from_the_given_start_point() {
     let repo = TestRepo::new();
     repo.write("a.txt", "1\n");

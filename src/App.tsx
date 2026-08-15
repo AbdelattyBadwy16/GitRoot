@@ -435,6 +435,7 @@ export default function App() {
     const path = repo.path;
 
     const tick = async () => {
+      if (busyRef.current !== null) return;
       let fp: string;
       try {
         fp = await getRepoFingerprint(path);

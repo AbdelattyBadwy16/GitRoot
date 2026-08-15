@@ -1020,13 +1020,26 @@ fn switch_branch_sync(repo_path: String, branch: String) -> Result<CommandResult
     let command = display_command(&["checkout", &branch]);
     let previous_branch =
         super::current_branch_name(&repo_path).unwrap_or_else(|_| "unknown".to_string());
+
+    let before_status = run_git(&repo_path, &["status", "--porcelain"])?;
+    let carried_over = before_status
+        .stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .count();
+
     let result = run_git(&repo_path, &["checkout", &branch])?;
     if !result.success {
         return Ok(CommandResult::failure(&command, result.stderr));
     }
     Ok(CommandResult::ok(
         &command,
-        json!({ "branch": branch.clone(), "before": previous_branch, "after": branch }),
+        json!({
+            "branch": branch.clone(),
+            "before": previous_branch,
+            "after": branch,
+            "carriedOverUncommitted": carried_over as u32,
+        }),
     ))
 }
 
