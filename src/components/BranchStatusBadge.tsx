@@ -45,7 +45,7 @@ export default function BranchStatusBadge({ branch, changedFiles }: { branch: Br
             {branch.behind > 0 && (
               <Chip
                 label={`↓${branch.behind}`}
-                title={`${branch.behind} commit${branch.behind === 1 ? "" : "s"} on ${branch.upstream} you don't have yet — pull to catch up`}
+                title={`${branch.behind} commit${branch.behind === 1 ? "" : "s"} on ${branch.upstream} you don't have yet, pull to catch up`}
               />
             )}
           </>
@@ -57,7 +57,7 @@ export default function BranchStatusBadge({ branch, changedFiles }: { branch: Br
         label={clean ? "clean" : `${changedFiles} uncommitted`}
         title={
           clean
-            ? "working directory matches the last commit — nothing to commit"
+            ? "working directory matches the last commit, nothing to commit"
             : `${changedFiles} file${changedFiles === 1 ? "" : "s"} changed since the last commit`
         }
         dotColor={clean ? "var(--lane-3)" : "var(--lane-2)"}

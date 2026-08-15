@@ -5,7 +5,7 @@ export default function LearningModeToggle({ value, onChange }: { value: boolean
     <button
       data-tour="learning-mode"
       onClick={() => onChange(!value)}
-      title={value ? "learning mode is on — click to turn off" : "learning mode is off — click to turn on"}
+      title={value ? "learning mode is on, click to turn off" : "learning mode is off, click to turn on"}
       style={{
         display: "flex",
         alignItems: "center",

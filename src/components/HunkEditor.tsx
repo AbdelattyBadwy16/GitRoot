@@ -123,8 +123,8 @@ export default function HunkEditor({ repoPath, filePath, onBack, onChanged }: Hu
       <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{filePath}</div>
       <p style={{ margin: "0 0 16px", fontSize: 12, color: "var(--text-muted)" }}>
         {result?.staged
-          ? "nothing unstaged here — these lines are already staged (probably from undoing a commit). uncheck what you don't want, then unstage just what's checked."
-          : "every added/removed line has its own checkbox — uncheck what you don't want, then stage or discard just what's checked."}
+          ? "nothing unstaged here, these lines are already staged (probably from undoing a commit). uncheck what you don't want, then unstage just what's checked."
+          : "every added/removed line has its own checkbox. uncheck what you don't want, then stage or discard just what's checked."}
       </p>
 
       {error && (
@@ -148,7 +148,7 @@ export default function HunkEditor({ repoPath, filePath, onBack, onChanged }: Hu
       ) : result.wholeFileOnly ? (
         <div style={{ padding: "20px", textAlign: "center", border: "1px dashed var(--border)", borderRadius: 10 }}>
           <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5, margin: "0 0 14px" }}>
-            this file changed, but it can't be split into parts — it's likely binary (an image, a compiled file,
+            this file changed, but it can't be split into parts. it's likely binary (an image, a compiled file,
             .DS_Store...), which git only tracks as "changed" or not, never line by line.{" "}
             {result.staged ? "unstage the whole file instead:" : "stage or discard the whole file instead:"}
           </p>
@@ -265,7 +265,7 @@ export default function HunkEditor({ repoPath, filePath, onBack, onChanged }: Hu
                           <button
                             onClick={() => act(i, "unstage")}
                             disabled={busyIndex !== null || selectedCount === 0}
-                            title="unstage just the checked lines — the working tree is untouched"
+                            title="unstage just the checked lines, the working tree is untouched"
                             style={{
                               padding: "5px 10px",
                               borderRadius: 6,
@@ -365,12 +365,12 @@ export default function HunkEditor({ repoPath, filePath, onBack, onChanged }: Hu
             title="discard for good?"
             message={
               confirmDiscard.kind === "whole"
-                ? `this throws away every unstaged change in "${filePath}" — it can't be brought back.`
+                ? `this throws away every unstaged change in "${filePath}". it can't be brought back.`
                 : (() => {
                     const hunk = result.hunks[confirmDiscard.index];
                     const selected = selections.get(confirmDiscard.index) ?? new Set<number>();
                     const changedCount = parseDiff(hunk).filter((l) => l.kind === "add" || l.kind === "remove").length;
-                    return `this throws away ${selected.size}/${changedCount} line${changedCount === 1 ? "" : "s"} in "${filePath}" — it can't be brought back.`;
+                    return `this throws away ${selected.size}/${changedCount} line${changedCount === 1 ? "" : "s"} in "${filePath}". it can't be brought back.`;
                   })()
             }
             confirmLabel="discard"

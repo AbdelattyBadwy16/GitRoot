@@ -30,7 +30,7 @@ export default function StagingList({ files, onToggle, onOpenFile, message, onMe
         staging area
       </div>
       <p style={{ color: "var(--text-secondary)", margin: "0 0 16px", lineHeight: 1.5, fontSize: 13 }}>
-        checking a file stages all of it — git only commits what's staged, not everything that
+        checking a file stages all of it. git only commits what's staged, not everything that
         changed. click a row to see exactly what changed, and stage or discard it piece by piece.
       </p>
 
@@ -45,7 +45,7 @@ export default function StagingList({ files, onToggle, onOpenFile, message, onMe
             borderRadius: 10,
           }}
         >
-          no changed files — your working directory is clean.
+          no changed files, your working directory is clean.
         </div>
       ) : (
         <div style={{ marginBottom: 16, borderRadius: 10, border: "1px solid var(--border)", overflow: "hidden" }}>

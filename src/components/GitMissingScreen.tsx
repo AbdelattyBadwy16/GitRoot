@@ -39,7 +39,7 @@ export default function GitMissingScreen({ onRetry }: { onRetry: () => void }) {
               cursor: "pointer",
             }}
           >
-            i installed it — check again
+            i installed it, check again
           </button>
         </div>
       </div>

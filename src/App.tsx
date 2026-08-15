@@ -877,7 +877,7 @@ export default function App() {
         {dropStashTarget && (
           <ConfirmDialog
             title="drop this stash?"
-            message={`this deletes "${dropStashTarget.message}" for good — the changes it held can't be brought back.`}
+            message={`this deletes "${dropStashTarget.message}" for good. the changes it held can't be brought back.`}
             confirmLabel="drop stash"
             onConfirm={confirmDropStash}
             onCancel={() => setDropStashTarget(null)}

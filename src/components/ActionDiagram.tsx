@@ -227,7 +227,7 @@ function UndoDiagram({ target, count }: { target: string; count: number }) {
             flexShrink: 0,
           }}
         />
-        <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--lane-3)" }}>new commit — undoes all of the above</span>
+        <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--lane-3)" }}>new commit: undoes all of the above</span>
       </motion.div>
       <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 5, fontSize: 9.5, color: "var(--text-muted)" }}>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--lane-3)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">

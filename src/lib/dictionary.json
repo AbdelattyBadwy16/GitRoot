@@ -2,41 +2,41 @@
   "pull": {
     "meaning": "downloads new commits from the remote and merges them into your branch.",
     "result": "pulled {n} commit{s} from {remote}.",
-    "resultZero": "{remote} had nothing new — you're already up to date.",
+    "resultZero": "{remote} had nothing new. you're already up to date.",
     "steps": ["reached out to {remote}", "found {n} new commit{s} you didn't have yet", "merged them into {branch}"],
     "stepsZero": ["reached out to {remote}", "it has nothing you don't already have"],
     "authError": "you're not logged in to pull from this remote.",
-    "networkError": "couldn't reach {remote} — check your network or VPN connection."
+    "networkError": "couldn't reach {remote}. check your network or VPN connection."
   },
   "push": {
     "meaning": "uploads your commits so the remote matches your branch.",
     "result": "pushed {n} commit{s} to {remote}.",
-    "resultZero": "nothing to push — {remote} already matches your branch.",
+    "resultZero": "nothing to push. {remote} already matches your branch.",
     "steps": ["checked what {remote} already has", "sent it the {n} commit{s} it was missing", "{remote} now matches {branch}"],
-    "stepsZero": ["checked {remote}", "it already matches your branch — nothing to send"],
+    "stepsZero": ["checked {remote}", "it already matches your branch, nothing to send"],
     "authError": "you're not logged in to push to this remote.",
-    "networkError": "couldn't reach {remote} — check your network or VPN connection.",
-    "nonFastForward": "someone else pushed to {remote} since you last pulled — pull those commits in, then push again."
+    "networkError": "couldn't reach {remote}. check your network or VPN connection.",
+    "nonFastForward": "someone else pushed to {remote} since you last pulled. pull those commits in, then push again."
   },
   "stash": {
     "meaning": "sets uncommitted changes aside so your working directory is clean.",
-    "result": "saved {n} changed file{s} — bring them back with stash pop.",
-    "resultZero": "nothing to save — no changed files.",
+    "result": "saved {n} changed file{s}. bring them back with stash pop.",
+    "resultZero": "nothing to save, no changed files.",
     "steps": ["took every tracked change out of your working directory", "saved {n} file{s} as a stash entry", "your working directory is clean now"],
-    "stepsZero": ["checked your working directory", "nothing tracked was changed — there was nothing to set aside"]
+    "stepsZero": ["checked your working directory", "nothing tracked was changed, so there was nothing to set aside"]
   },
   "applyStash": {
     "meaning": "brings \"{target}\" back into your working directory, keeping the stash entry.",
-    "result": "applied \"{target}\" — it's still in your stash list too.",
+    "result": "applied \"{target}\". it's still in your stash list too.",
     "steps": ["took the stashed changes", "reapplied them to your working directory", "kept the stash entry in case you need it again"]
   },
   "popStash": {
     "meaning": "brings \"{target}\" back into your working directory and removes the stash entry.",
-    "result": "popped \"{target}\" — it's back in your working directory.",
+    "result": "popped \"{target}\". it's back in your working directory.",
     "steps": ["took the stashed changes", "reapplied them to your working directory", "removed the stash entry since it's been restored"]
   },
   "dropStash": {
-    "meaning": "deletes \"{target}\" for good — the changes it held are gone.",
+    "meaning": "deletes \"{target}\" for good, the changes it held are gone.",
     "result": "dropped \"{target}\" for good.",
     "steps": ["found the stash entry", "deleted it", "the changes it held can't be brought back"]
   },
@@ -53,23 +53,23 @@
   "createBranch": {
     "meaning": "creates a new branch starting from {from}, and switches to it.",
     "result": "now on {branch}.",
-    "steps": ["created a new branch pointer at {from}", "switched your working directory to it", "{branch} points at the same commit as {from} for now — they'll diverge once you commit"]
+    "steps": ["created a new branch pointer at {from}", "switched your working directory to it", "{branch} points at the same commit as {from} for now, they'll diverge once you commit"]
   },
   "revert": {
-    "meaning": "undoes commits by adding a new commit that reverses them — nothing is deleted from history.",
+    "meaning": "undoes commits by adding a new commit that reverses them. nothing is deleted from history.",
     "result": "reverted {n} commit{s} back to {target}.",
-    "steps": ["found the {n} commit{s} after {target}", "created new commit{s} that undo exactly their changes", "nothing was deleted — {target} and everything after it still exist in history"],
-    "confirmText": "this adds new commit{s} that undo the {n} commit{s} after {target} — none of them are deleted, and this is safe even if they've been pushed. continue?",
-    "conflictPaused": "git paused the revert here — {files} conflict. resolve them in your editor or terminal, then come back and continue.",
+    "steps": ["found the {n} commit{s} after {target}", "created new commit{s} that undo exactly their changes", "nothing was deleted, {target} and everything after it still exist in history"],
+    "confirmText": "this adds new commit{s} that undo the {n} commit{s} after {target}. none of them are deleted, and this is safe even if they've been pushed. continue?",
+    "conflictPaused": "git paused the revert here. {files} conflict. resolve them in your editor or terminal, then come back and continue.",
     "risky": false
   },
   "reset": {
     "meaning": "moves {branch} back to {target}. what happens to the commits' changes depends on the mode you pick.",
-    "soft": "moved {branch} back to {target} — your changes from the {n} commit{s} stay staged, ready to commit again.",
-    "mixed": "moved {branch} back to {target} — your changes from the {n} commit{s} stay, but unstaged.",
+    "soft": "moved {branch} back to {target}. your changes from the {n} commit{s} stay staged, ready to commit again.",
+    "mixed": "moved {branch} back to {target}. your changes from the {n} commit{s} stay, but unstaged.",
     "hard": "moved {branch} back to {target} and discarded the {n} commit{s} and their changes.",
-    "modeSoft": "keeps the changes from the commits you're moving past — staged, ready to commit again.",
-    "modeMixed": "keeps the changes from the commits you're moving past — but unstaged, like you never committed them.",
+    "modeSoft": "keeps the changes from the commits you're moving past, staged and ready to commit again.",
+    "modeMixed": "keeps the changes from the commits you're moving past, but unstaged, like you never committed them.",
     "modeHard": "throws away the changes from the commits you're moving past. this can't be undone through the app.",
     "alreadyPushedWarning": "some of these commits are already on your remote. resetting past them will diverge your branch from the shared history. continue?",
     "confirmDiscard": "this will permanently discard {n} commit{s} and their changes. continue?",
@@ -82,15 +82,15 @@
   },
   "merge": {
     "meaning": "combines {target}'s history into {branch}.",
-    "result": "merged {target} into {branch} — {n} commit{s}, no conflicts.",
-    "resultZero": "{target} was already merged into {branch} — nothing to do.",
+    "result": "merged {target} into {branch}: {n} commit{s}, no conflicts.",
+    "resultZero": "{target} was already merged into {branch}, nothing to do.",
     "resultFastForward": "fast-forwarded {branch} to include {target}'s {n} commit{s}.",
     "steps": ["checked how {branch} and {target} relate", "combined {target}'s {n} commit{s} into {branch}", "{branch} now has a new merge commit joining both histories"],
     "stepsFastForward": ["checked how {branch} and {target} relate", "{branch} had no commits of its own since diverging, so it just moved forward", "no new merge commit was needed"],
     "fastForward": "this will fast-forward {branch} to include {target}'s {n} commits.",
     "clean": "this will merge {target} into {branch}, {n} commits, no conflicts.",
-    "wouldConflict": "this will merge {target} into {branch}, but {files} conflict — you'll need to resolve them.",
-    "conflictPaused": "git paused the merge here — {files} conflict. resolve them in your editor or terminal, then come back and continue.",
+    "wouldConflict": "this will merge {target} into {branch}, but {files} conflict. you'll need to resolve them.",
+    "conflictPaused": "git paused the merge here. {files} conflict. resolve them in your editor or terminal, then come back and continue.",
     "risky": false
   },
   "rebase": {
@@ -100,7 +100,7 @@
     "alreadyPushedWarning": "some of these commits are already on your remote. rebasing rewrites their history, which can cause real problems for anyone who's already pulled them. continue?",
     "plan": "this will replay {n} commits from {branch} onto {target}, one at a time, giving them new commit hashes.",
     "progress": "resolving commit {current} of {total}...",
-    "conflictPaused": "git paused the rebase on commit {current} of {total} — {files} conflict. resolve them in your editor or terminal, then come back and continue.",
+    "conflictPaused": "git paused the rebase on commit {current} of {total}. {files} conflict. resolve them in your editor or terminal, then come back and continue.",
     "risky": true
   }
 }
