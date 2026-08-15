@@ -11,6 +11,7 @@ type DictEntry = {
   stepsFastForward?: string[];
   authError?: string;
   networkError?: string;
+  nonFastForward?: string;
   confirmText?: string;
   conflictPaused?: string;
   risky?: boolean;
@@ -81,6 +82,13 @@ function resultText(kind: ActionKind, result: CommandResult): string {
   if (result.conflict) {
     const template = entry.conflictPaused ?? "git paused here — resolve the conflicting files, then continue.";
     return fillTemplate(template, 0, result.data).replaceAll("{files}", filesList(result.data));
+  }
+  if (result.nonFastForward) {
+    return fillTemplate(
+      entry.nonFastForward ?? "{remote} has commits you don't have yet — pull them in first, then push again.",
+      0,
+      result.data,
+    );
   }
   if (!result.success) {
     return result.rawStderr?.trim() || "that command didn't succeed.";

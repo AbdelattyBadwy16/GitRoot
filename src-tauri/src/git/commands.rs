@@ -1,5 +1,6 @@
 use super::{
-    looks_like_auth_error, looks_like_network_error, run_git, run_git_with_stdin, GitOutput,
+    looks_like_auth_error, looks_like_network_error, looks_like_no_tracking_error,
+    looks_like_non_fast_forward_error, run_git, run_git_with_stdin, GitOutput,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -11,6 +12,7 @@ pub struct CommandResult {
     pub auth_error: bool,
     pub network_error: bool,
     pub conflict: bool,
+    pub non_fast_forward: bool,
     pub raw_stderr: Option<String>,
     pub data: Value,
     pub command: String,
@@ -68,6 +70,7 @@ impl CommandResult {
             auth_error: false,
             network_error: false,
             conflict: false,
+            non_fast_forward: false,
             raw_stderr: None,
             data,
             command: command.to_string(),
@@ -80,6 +83,7 @@ impl CommandResult {
             auth_error: true,
             network_error: false,
             conflict: false,
+            non_fast_forward: false,
             raw_stderr: None,
             data: json!({ "remote": remote }),
             command: command.to_string(),
@@ -92,6 +96,20 @@ impl CommandResult {
             auth_error: false,
             network_error: true,
             conflict: false,
+            non_fast_forward: false,
+            raw_stderr: None,
+            data: json!({ "remote": remote }),
+            command: command.to_string(),
+        }
+    }
+
+    fn non_fast_forward_failure(command: &str, remote: &str) -> Self {
+        Self {
+            success: false,
+            auth_error: false,
+            network_error: false,
+            conflict: false,
+            non_fast_forward: true,
             raw_stderr: None,
             data: json!({ "remote": remote }),
             command: command.to_string(),
@@ -104,6 +122,7 @@ impl CommandResult {
             auth_error: false,
             network_error: false,
             conflict: false,
+            non_fast_forward: false,
             raw_stderr: Some(stderr),
             data: json!({}),
             command: command.to_string(),
@@ -116,6 +135,7 @@ impl CommandResult {
             auth_error: false,
             network_error: false,
             conflict: true,
+            non_fast_forward: false,
             raw_stderr: None,
             data: json!({ "branch": branch, "files": files }),
             command: command.to_string(),
@@ -133,6 +153,8 @@ impl CommandResult {
             Self::auth_failure(command, remote)
         } else if looks_like_network_error(&stderr) {
             Self::network_failure(command, remote)
+        } else if looks_like_non_fast_forward_error(&stderr) {
+            Self::non_fast_forward_failure(command, remote)
         } else {
             Self::failure(command, stderr)
         }
@@ -163,10 +185,36 @@ fn pull_sync(repo_path: String) -> Result<CommandResult, String> {
     let remote = upstream_ref(&repo_path).unwrap_or_else(|| "origin".to_string());
     // this force pull to always use merge, not rebase, so we get same result on every machine
     let pull_args = ["pull", "--no-rebase"];
-    let command = display_command(&pull_args);
+    let mut command = display_command(&pull_args);
 
     let before = run_git(&repo_path, &["rev-parse", "HEAD"])?.stdout;
-    let result = run_git(&repo_path, &pull_args)?;
+    let mut result = run_git(&repo_path, &pull_args)?;
+
+    // no upstream configured yet (fresh repo, remote added after the fact, branch created
+    // without --track...) - retry with the remote+branch spelled out explicitly, which works
+    // even when the local branch has zero commits yet ("unborn" - `branch --set-upstream-to`
+    // alone fails on those, since the branch is not a real ref until it has a commit) rather
+    // than surfacing git's raw "there is no tracking information" wall of text
+    if !result.success && looks_like_no_tracking_error(&result.stderr) {
+        let branch = super::current_branch_name(&repo_path).unwrap_or_default();
+        let retry_args = ["pull", "--no-rebase", "origin", branch.as_str()];
+        let retried = run_git(&repo_path, &retry_args)?;
+        if retried.success {
+            command = display_command(&retry_args);
+            // the branch is a real ref now (it just got its first commit), so this can
+            // succeed where it couldn't before - link it for next time too
+            let _ = run_git(
+                &repo_path,
+                &[
+                    "branch",
+                    "--set-upstream-to",
+                    &format!("origin/{branch}"),
+                    &branch,
+                ],
+            );
+        }
+        result = retried;
+    }
 
     if !result.success {
         let unmerged = conflicted_files_sync(&repo_path)?;
@@ -1206,10 +1254,20 @@ fn unstaged_diff(repo_path: &str, path: &str) -> Result<GitOutput, String> {
     run_git(repo_path, &["diff", "--", path])
 }
 
+// what's already in the index vs HEAD - the counterpart to unstaged_diff, needed for a file
+// that's entirely staged already (e.g. right after undoing a commit, which keeps everything
+// staged) where the unstaged diff has nothing to show at all
+fn staged_diff(repo_path: &str, path: &str) -> Result<GitOutput, String> {
+    run_git(repo_path, &["diff", "--cached", "--", path])
+}
+
 #[derive(Debug, Serialize)]
 pub struct FileHunks {
     pub hunks: Vec<String>,
     pub whole_file_only: bool,
+    // true if these are staged hunks (nothing unstaged to show), false for the normal
+    // unstaged case - tells the frontend whether "stage"/"discard" or "unstage" applies
+    pub staged: bool,
 }
 
 #[tauri::command]
@@ -1224,11 +1282,31 @@ fn file_hunks_sync(repo_path: String, path: String) -> Result<FileHunks, String>
     if !diff.success {
         return Err(diff.stderr);
     }
+
+    if diff.stdout.trim().is_empty() {
+        // nothing unstaged - fall back to what's staged, so a fully-staged file (right after
+        // undoing a commit, say) is not just a silent dead end
+        let staged = staged_diff(&repo_path, &path)?;
+        if !staged.success {
+            return Err(staged.stderr);
+        }
+        if !staged.stdout.trim().is_empty() {
+            let (_, hunks) = split_into_hunks(&staged.stdout);
+            let whole_file_only = hunks.is_empty();
+            return Ok(FileHunks {
+                hunks,
+                whole_file_only,
+                staged: true,
+            });
+        }
+    }
+
     let (_, hunks) = split_into_hunks(&diff.stdout);
     let whole_file_only = hunks.is_empty() && !diff.stdout.trim().is_empty();
     Ok(FileHunks {
         hunks,
         whole_file_only,
+        staged: false,
     })
 }
 
@@ -1269,6 +1347,7 @@ pub async fn stage_hunk_lines(
             &lines.into_iter().collect(),
             false,
             &["apply", "--cached", "--recount"],
+            false,
         )
     })
     .await
@@ -1290,6 +1369,32 @@ pub async fn discard_hunk_lines(
             &lines.into_iter().collect(),
             true,
             &["apply", "--reverse", "--recount"],
+            false,
+        )
+    })
+    .await
+    .map_err(|e| format!("internal error: {e}"))?
+}
+
+// counterpart to discard_hunk_lines but for staged content: removes the selected lines from
+// the index only (--cached), leaving the working tree untouched - real `git reset -p`
+// semantics, not a discard. Used when file_hunks came back in "staged" mode.
+#[tauri::command]
+pub async fn unstage_hunk_lines(
+    repo_path: String,
+    path: String,
+    hunk_index: usize,
+    lines: Vec<usize>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        apply_selected_hunk_lines(
+            &repo_path,
+            &path,
+            hunk_index,
+            &lines.into_iter().collect(),
+            true,
+            &["apply", "--cached", "--reverse", "--recount"],
+            true,
         )
     })
     .await
@@ -1303,8 +1408,13 @@ fn apply_selected_hunk_lines(
     selected: &HashSet<usize>,
     reverse: bool,
     apply_args: &[&str],
+    staged: bool,
 ) -> Result<(), String> {
-    let diff = unstaged_diff(repo_path, path)?;
+    let diff = if staged {
+        staged_diff(repo_path, path)?
+    } else {
+        unstaged_diff(repo_path, path)?
+    };
     if !diff.success {
         return Err(diff.stderr);
     }
@@ -1360,6 +1470,32 @@ pub async fn conflicted_files(repo_path: String) -> Result<Vec<String>, String> 
     tauri::async_runtime::spawn_blocking(move || conflicted_files_sync(&repo_path))
         .await
         .map_err(|e| format!("internal error: {e}"))?
+}
+
+// git's own conflict-marker convention (see "how conflicts are presented" in git-merge(1)): a
+// line starting with 7 `<` and a label, a line of exactly 7 `=`, and a line starting with 7 `>`
+// and a label. the conflict dialog warns before staging a file that still has these - someone
+// new to git can easily save the file without actually removing the markers.
+fn has_conflict_markers_sync(repo_path: &str, path: &str) -> bool {
+    let full_path = std::path::Path::new(repo_path).join(path);
+    let Ok(contents) = std::fs::read_to_string(full_path) else {
+        // binary, or the file's already gone (staged/deleted since) - nothing to warn about
+        return false;
+    };
+    contents.lines().any(|line| {
+        line.starts_with("<<<<<<< ")
+            || line == "<<<<<<<"
+            || line == "======="
+            || line.starts_with(">>>>>>> ")
+            || line == ">>>>>>>"
+    })
+}
+
+#[tauri::command]
+pub async fn has_conflict_markers(repo_path: String, path: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || has_conflict_markers_sync(&repo_path, &path))
+        .await
+        .map_err(|e| format!("internal error: {e}"))
 }
 
 // ===== merge =====

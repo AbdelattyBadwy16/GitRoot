@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { CommitGraphData, GraphCommit, GraphEdge } from "../lib/gitCommands";
 import { isHead } from "../lib/graph";
+import { usePrefersReducedMotion } from "../hooks/usePrefersReducedMotion";
 
 export interface CommitRef {
   hash: string;
@@ -34,6 +35,10 @@ const MERGE_SIZE = 15;
 const TOP_PADDING = 30;
 const MAX_VISIBLE_TIPS = 6;
 const MAX_AFFECTED_PREVIEW = 5;
+// a commit with many branches pointing at it used to wrap those badges onto extra lines and
+// grow past this row's fixed height, spilling into the commit drawn below it. capping keeps
+// every row exactly ROW_HEIGHT tall, same idea as MAX_VISIBLE_TIPS above the graph.
+const MAX_REFS_PER_COMMIT = 3;
 
 const LANE_COLORS = [
   "var(--lane-1)",
@@ -84,18 +89,6 @@ function parseRef(r: string): { label: string; head: boolean } {
   if (r === "HEAD") return { label: "HEAD (detached)", head: true };
   if (r.startsWith("HEAD -> ")) return { label: r.slice(8), head: true };
   return { label: r, head: false };
-}
-
-function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    setReduced(mq.matches);
-    const onChange = () => setReduced(mq.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
-  return reduced;
 }
 
 export default function CommitGraph({
@@ -522,10 +515,10 @@ export default function CommitGraph({
                     overflow: "hidden",
                   }}
                 >
-                  <div style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "baseline", minWidth: 0 }}>
                     {commit.refs.length > 0 && (
-                      <span style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                        {commit.refs.map((raw) => {
+                      <span style={{ display: "flex", gap: 4, flexWrap: "nowrap", flexShrink: 0 }}>
+                        {commit.refs.slice(0, MAX_REFS_PER_COMMIT).map((raw) => {
                           const { label, head: isHeadRef } = parseRef(raw);
                           return (
                             <motion.span
@@ -549,10 +542,33 @@ export default function CommitGraph({
                             </motion.span>
                           );
                         })}
+                        {commit.refs.length > MAX_REFS_PER_COMMIT && (
+                          <span
+                            title={commit.refs
+                              .slice(MAX_REFS_PER_COMMIT)
+                              .map((raw) => parseRef(raw).label)
+                              .join(", ")}
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              padding: "1px 7px",
+                              borderRadius: 999,
+                              color: "var(--text-muted)",
+                              background: "var(--surface-2)",
+                              border: "1px solid var(--border)",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            +{commit.refs.length - MAX_REFS_PER_COMMIT}
+                          </span>
+                        )}
                       </span>
                     )}
                     <span
+                      title={commit.message}
                       style={{
+                        flex: "1 1 auto",
+                        minWidth: 0,
                         whiteSpace: "nowrap",
                         overflow: "hidden",
                         textOverflow: "ellipsis",

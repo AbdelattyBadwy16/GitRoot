@@ -150,6 +150,28 @@ pub fn looks_like_network_error(stderr: &str) -> bool {
     MARKERS.iter().any(|m| lower.contains(m))
 }
 
+// "there is no tracking information for the current branch" - git's own wording when a local
+// branch was never linked to a remote one (fresh init+remote-add, or a branch created without
+// --track). pull_sync uses this to auto-link to origin/<branch> and retry once, the same way
+// push_sync already auto-sets upstream on first push, instead of surfacing git's raw wall of
+// text with a `git branch --set-upstream-to=...` suggestion the user has to go run themselves.
+pub fn looks_like_no_tracking_error(stderr: &str) -> bool {
+    stderr
+        .to_lowercase()
+        .contains("no tracking information for the current branch")
+}
+
+// git's push-rejection wording for "the remote has commits you don't have locally yet" - either
+// "(non-fast-forward)" (git knows your tip is a strict ancestor of the old remote tip) or
+// "(fetch first)" (git can't tell the relationship without fetching, same underlying cause from
+// the user's point of view). push_sync surfaces this as its own friendly "pull first" message
+// instead of git's raw rejected-refs wall of hints.
+pub fn looks_like_non_fast_forward_error(stderr: &str) -> bool {
+    let lower = stderr.to_lowercase();
+    lower.contains("[rejected]")
+        && (lower.contains("non-fast-forward") || lower.contains("fetch first"))
+}
+
 #[derive(Debug, Serialize)]
 pub struct RepoInfo {
     pub name: String,
