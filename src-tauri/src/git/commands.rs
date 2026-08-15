@@ -983,7 +983,7 @@ fn undo_create_branch_sync(
         return Ok(CommandResult::failure(
             &command,
             format!(
-                "{name} already has {ahead} commit{} of its own — switch away instead of undoing its creation.",
+                "{name} already has {ahead} commit{} of its own. switch away instead of undoing its creation.",
                 if ahead == 1 { "" } else { "s" }
             ),
         ));
@@ -1035,7 +1035,7 @@ fn revert_to_commit_sync(repo_path: String, target: String) -> Result<CommandRes
     if commits == 0 {
         return Ok(CommandResult::failure(
             &command,
-            "that's already the current commit — nothing to revert.".to_string(),
+            "that's already the current commit, nothing to revert.".to_string(),
         ));
     }
 
@@ -1059,7 +1059,7 @@ fn revert_to_commit_sync(repo_path: String, target: String) -> Result<CommandRes
         // way) - nothing to resolve, so clean up and just fail normally
         let _ = run_git(&repo_path, &["revert", "--abort"]);
         let message = format!(
-            "{}\n\ngitroot backed this out automatically (git revert --abort) — your repo is unchanged.",
+            "{}\n\ngitroot backed this out automatically (git revert --abort). your repo is unchanged.",
             result.stderr.trim()
         );
         return Ok(CommandResult::failure(&command, message));
@@ -1147,7 +1147,7 @@ fn split_into_hunks(diff: &str) -> (String, Vec<String>) {
 fn single_hunk_patch(diff: &str, hunk_index: usize) -> Result<String, String> {
     let (header, hunks) = split_into_hunks(diff);
     let hunk = hunks.get(hunk_index).ok_or_else(|| {
-        "that change isn't there anymore — the file may have changed. refresh and try again."
+        "that change isn't there anymore, the file may have changed. refresh and try again."
             .to_string()
     })?;
     Ok(format!("{header}\n{hunk}\n"))
@@ -1161,7 +1161,7 @@ fn selected_hunk_patch(
 ) -> Result<String, String> {
     let (header, hunks) = split_into_hunks(diff);
     let hunk = hunks.get(hunk_index).ok_or_else(|| {
-        "that change isn't there anymore — the file may have changed. refresh and try again."
+        "that change isn't there anymore, the file may have changed. refresh and try again."
             .to_string()
     })?;
     let body = rebuild_hunk_from_selection(hunk, selected, reverse)?;

@@ -32,7 +32,7 @@ const BLOBS = [
 
 const FEATURES: { color: string; text: string }[] = [
   { color: "var(--lane-1)", text: "every command explained in plain language" },
-  { color: "var(--lane-3)", text: "undo safely — history is never force-deleted" },
+  { color: "var(--lane-3)", text: "undo safely, history is never force-deleted" },
   { color: "var(--lane-2)", text: "stage changes file-by-file, even piece-by-piece" },
   { color: "var(--lane-7)", text: "every branch visible, one click to switch" },
 ];
@@ -104,7 +104,7 @@ export default function LandingPage({
                 </h1>
               </div>
               <p style={{ color: "var(--text-secondary)", margin: "0 0 26px", fontSize: 15, lineHeight: 1.55, maxWidth: 400 }}>
-                A git client that explains what it's doing, every time — open a folder, clone a repository, or
+                A git client that explains what it's doing, every time. open a folder, clone a repository, or
                 start a brand new one.
               </p>
 
@@ -213,7 +213,7 @@ export default function LandingPage({
                       </button>
                     </div>
                     <p style={{ margin: "8px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>
-                      you'll be asked where to put it — GitRoot creates a new folder there for the repo.
+                      you'll be asked where to put it. GitRoot creates a new folder there for the repo.
                     </p>
                   </motion.div>
                 )}
@@ -301,12 +301,12 @@ export default function LandingPage({
                       {notGitFolderPath}
                     </p>
                     <p style={{ margin: "0 0 10px", fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.5 }}>
-                      set one up here — optionally link a remote now (or skip this and add one later):
+                      set one up here, optionally link a remote now (or skip this and add one later):
                     </p>
                     <input
                       value={initRemoteUrl}
                       onChange={(e) => onInitRemoteUrlChange(e.target.value)}
-                      placeholder="remote URL (optional) — e.g. git@github.com:you/repo.git"
+                      placeholder="remote URL (optional), e.g. git@github.com:you/repo.git"
                       onKeyDown={(e) => e.key === "Enter" && onInit()}
                       style={{
                         width: "100%",
@@ -398,7 +398,7 @@ export default function LandingPage({
               </div>
 
               <p style={{ marginTop: 24, color: "var(--text-muted)", fontSize: 11.5 }}>
-                everything runs locally — nothing about your code leaves your machine.
+                everything runs locally, nothing about your code leaves your machine.
               </p>
             </div>
 

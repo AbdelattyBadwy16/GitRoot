@@ -1,11 +1,75 @@
 import type { CSSProperties } from "react";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { resetAlreadyPushedWarning, resetDiscardConfirmText, resetModeInlineText, type ResetMode } from "../lib/explain";
 import type { CommitActionContext } from "./CommitGraph";
 import type { FileChange } from "../lib/gitCommands";
 import CommitRangeSummary from "./CommitRangeSummary";
 import PreviewTabs from "./PreviewTabs";
 import FileChangesList from "./FileChangesList";
+
+// a single "your changes" chip that physically slides between the staging-area box and the
+// working-directory box as you click soft/mixed/hard, instead of the mode picker being three
+// static lines of text - the same shared-layoutId trick as a sliding tab indicator.
+function ChangeChip() {
+  return (
+    <motion.span
+      layoutId="reset-changes-chip"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ layout: { type: "spring", stiffness: 420, damping: 32 }, default: { duration: 0.18 } }}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        fontSize: 11.5,
+        fontWeight: 600,
+        color: "var(--lane-4)",
+        padding: "3px 9px",
+        borderRadius: 999,
+        background: "color-mix(in srgb, var(--lane-4) 16%, transparent)",
+        border: "1px solid color-mix(in srgb, var(--lane-4) 45%, transparent)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      ● your changes
+    </motion.span>
+  );
+}
+
+function ResetModeDiagram({ mode }: { mode: ResetMode }) {
+  const stagingActive = mode === "soft";
+  const workingActive = mode === "mixed";
+  const boxStyle: CSSProperties = {
+    flex: 1,
+    minHeight: 50,
+    borderRadius: 8,
+    border: "1px solid var(--border)",
+    background: "var(--surface-0)",
+    padding: "8px 10px",
+  };
+  const labelStyle: CSSProperties = {
+    fontSize: 10,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    color: "var(--text-muted)",
+    fontWeight: 600,
+    marginBottom: 6,
+  };
+
+  return (
+    <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+      <div style={boxStyle}>
+        <div style={labelStyle}>staging area</div>
+        <AnimatePresence>{stagingActive ? <ChangeChip /> : <span key="clean-staging" style={{ fontSize: 11.5, color: "var(--text-muted)" }}>clean</span>}</AnimatePresence>
+      </div>
+      <div style={boxStyle}>
+        <div style={labelStyle}>working directory</div>
+        <AnimatePresence>{workingActive ? <ChangeChip /> : <span key="clean-working" style={{ fontSize: 11.5, color: "var(--text-muted)" }}>clean</span>}</AnimatePresence>
+      </div>
+    </div>
+  );
+}
 
 interface ResetDialogProps {
   context: CommitActionContext;
@@ -136,6 +200,9 @@ export default function ResetDialog({
             <p style={{ margin: "0 0 14px", fontSize: 13.5, color: "var(--text-secondary)", lineHeight: 1.55 }}>
               {commits} commit{s} away. pick what happens to their changes.
             </p>
+
+            <ResetModeDiagram mode={mode} />
+
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 }}>
               {MODES.map(({ mode: m, label }) => (
                 <label

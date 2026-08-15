@@ -39,7 +39,7 @@ export const TOUR_STEPS: TourStep[] = [
     example: [
       "say your branch has 5 commits, newest at the top.",
       "you click the 2nd-oldest one and pick reset or revert.",
-      "reset moves your branch pointer back — pick soft, mixed, or hard for what happens to the commits' changes.",
+      "reset moves your branch pointer back. pick soft, mixed, or hard for what happens to the commits' changes.",
       "revert instead adds new commits that undo the old ones, so nothing is deleted from history.",
       "GitRoot shows exactly what would happen before it touches anything, and warns you first if any of it is already pushed.",
       "confirm, and only then does it run.",
@@ -54,7 +54,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: "command-pull",
     tab: "graph",
-    title: "pull — get their changes",
+    title: "pull: get their changes",
     body: "downloads new commits from the remote and merges them into your branch.",
     example: [
       "your teammate pushed 3 commits to origin/main that you don't have yet.",
@@ -66,7 +66,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: "command-push",
     tab: "graph",
-    title: "push — send yours",
+    title: "push: send yours",
     body: "uploads your commits so the remote matches your branch.",
     example: [
       "you made 2 commits locally that origin doesn't have yet.",
@@ -78,11 +78,11 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: "command-stash",
     tab: "graph",
-    title: "stash — set changes aside",
+    title: "stash: set changes aside",
     body: "sets your uncommitted changes aside so your working directory is clean, without committing anything half-finished.",
     example: [
       "you're mid-edit on a file but need to switch branches right now.",
-      "click stash — the changes are tucked away, working directory is clean.",
+      "click stash. the changes are tucked away, working directory is clean.",
       "switch branches freely, do whatever you need.",
       "come back and click \"stash pop\" to bring them back exactly as they were.",
     ],
@@ -107,12 +107,12 @@ export const TOUR_STEPS: TourStep[] = [
     id: "staging",
     tab: "commit",
     title: "staging changes",
-    body: "check a box to stage a whole file, or click it open to stage just a few lines — down to the line, not just the file.",
+    body: "check a box to stage a whole file, or click it open to stage just a few lines, down to the line, not just the file.",
     example: [
       "you edited login.tsx and styles.css, but only login.tsx is ready.",
       "check just login.tsx's box.",
       "type a message describing the change, click commit.",
-      "a new commit appears on the graph — styles.css stays unstaged for later.",
+      "a new commit appears on the graph. styles.css stays unstaged for later.",
     ],
   },
   {
@@ -123,32 +123,32 @@ export const TOUR_STEPS: TourStep[] = [
     example: [
       "you want to try something risky without touching main.",
       "type a name, pick main as the starting point, click create & switch.",
-      "you're now on the new branch — commit freely, main stays untouched.",
+      "you're now on the new branch. commit freely, main stays untouched.",
     ],
   },
   {
     id: "merge-picker",
     tab: "branches",
-    title: "merge — combine a branch in",
+    title: "merge: combine a branch in",
     body: "pick a branch to combine into the one you're on. GitRoot checks in advance what will happen, before anything runs.",
     example: [
       "you're on main, feature-login has 3 commits main doesn't have.",
-      "pick feature-login, click merge — GitRoot previews the outcome first:",
-      "• fast-forward — main has no commits of its own, so it just moves forward, no new merge commit.",
-      "• clean — both sides changed, but nothing overlaps, so it combines automatically.",
-      "• would conflict — it names the exact files, so you know before you commit to it.",
+      "pick feature-login, click merge. GitRoot previews the outcome first:",
+      "• fast-forward: main has no commits of its own, so it just moves forward, no new merge commit.",
+      "• clean: both sides changed, but nothing overlaps, so it combines automatically.",
+      "• would conflict: it names the exact files, so you know before you commit to it.",
       "confirm what you see, and it runs for real.",
     ],
   },
   {
     id: "rebase-picker",
     tab: "branches",
-    title: "rebase — replay onto a new base",
+    title: "rebase: replay onto a new base",
     body: "replays your branch's own commits on top of another branch, one at a time, each getting a new commit hash.",
     example: [
       "your branch has 2 commits, main moved on since you started.",
       "pick main, click rebase.",
-      "if any of your commits are already pushed, GitRoot warns you first — rewriting pushed history can cause real problems for anyone who already pulled it.",
+      "if any of your commits are already pushed, GitRoot warns you first: rewriting pushed history can cause real problems for anyone who already pulled it.",
       "confirm the warning only if you understand the risk, then see the plan: \"replay 2 commits from your-branch onto main.\"",
       "it replays them one at a time, showing \"resolving commit 1 of 2.\"",
     ],
@@ -162,19 +162,19 @@ export const TOUR_STEPS: TourStep[] = [
       "GitRoot shows exactly which files conflict.",
       "open them in your editor, resolve the conflict markers, save.",
       "continue lights up once every file is resolved.",
-      "changed your mind? abort is always one click away — it puts everything back exactly like before you started.",
+      "changed your mind? abort is always one click away. it puts everything back exactly like before you started.",
     ],
   },
   {
     id: "learning-mode",
     tab: "graph",
     title: "learning mode",
-    body: "flip this on and every command explains itself as it runs — what it means, what happened step by step, before and after.",
+    body: "flip this on and every command explains itself as it runs: what it means, what happened step by step, before and after.",
   },
   {
     id: "branch-status",
     tab: "graph",
     title: "always know where you stand",
-    body: "ahead or behind your remote, clean or not — visible from any tab, no need to go looking for it.",
+    body: "ahead or behind your remote, clean or not: visible from any tab, no need to go looking for it.",
   },
 ];

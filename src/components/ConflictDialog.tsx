@@ -31,10 +31,10 @@ const EXAMPLE_PHASES: ExamplePhase[] = ["raw", "local", "remote", "both"];
 const EXAMPLE_HOLD_MS: Record<ExamplePhase, number> = { raw: 5000, local: 5000, remote: 5000, both: 5000 };
 
 const EXAMPLE_CAPTION: Record<ExamplePhase, string> = {
-  raw: "this is what git leaves in the file — it won't build or run like this, you have to clean it up first.",
+  raw: "this is what git leaves in the file. it won't build or run like this, you have to clean it up first.",
   local: "keeping only the local version: delete the remote block, and all three marker lines.",
   remote: "keeping only the remote version: delete the local block, and all three marker lines.",
-  both: "keeping both: just delete the three marker lines — keep both lines of code.",
+  both: "keeping both: just delete the three marker lines, keep both lines of code.",
 };
 
 function SideBadge({ side }: { side: "local" | "remote" }) {
@@ -55,7 +55,7 @@ function SideBadge({ side }: { side: "local" | "remote" }) {
         border: `1px solid color-mix(in srgb, ${color} 40%, transparent)`,
       }}
     >
-      {side === "local" ? "local — your side" : "remote — their side"}
+      {side === "local" ? "local: your side" : "remote: their side"}
     </span>
   );
 }
@@ -174,7 +174,7 @@ export default function ConflictDialog({ repoPath, kind, target, onContinue, onA
       const fullPath = await join(repoPath, relativePath);
       await openPath(fullPath);
     } catch (err) {
-      setOpenError(`couldn't open ${relativePath} — ${String(err)}`);
+      setOpenError(`couldn't open ${relativePath}: ${String(err)}`);
     }
   }
 
@@ -200,7 +200,7 @@ export default function ConflictDialog({ repoPath, kind, target, onContinue, onA
     try {
       await stageFile(repoPath, relativePath);
     } catch (err) {
-      setOpenError(`couldn't mark ${relativePath} as resolved — ${String(err)}`);
+      setOpenError(`couldn't mark ${relativePath} as resolved: ${String(err)}`);
     } finally {
       setStagingFile(null);
     }
@@ -282,10 +282,10 @@ export default function ConflictDialog({ repoPath, kind, target, onContinue, onA
 
         <p style={{ margin: "0 0 6px", fontSize: 13.5, color: "var(--text-secondary)", lineHeight: 1.55 }}>
           {kind === "merge"
-            ? `git paused while merging ${target} — it couldn't combine these files automatically.`
+            ? `git paused while merging ${target}. it couldn't combine these files automatically.`
             : kind === "rebase"
-            ? `git paused while replaying your commits onto ${target} — it couldn't apply one automatically.`
-            : `git paused while reverting a commit that touched the same lines as something after it — it couldn't undo it automatically.`}{" "}
+            ? `git paused while replaying your commits onto ${target}. it couldn't apply one automatically.`
+            : `git paused while reverting a commit that touched the same lines as something after it. it couldn't undo it automatically.`}{" "}
           the file(s) below have two versions of the same lines, and git needs you to pick which ones stay.
         </p>
 
@@ -303,10 +303,10 @@ export default function ConflictDialog({ repoPath, kind, target, onContinue, onA
           </div>
           <ol style={{ margin: "0 0 10px", padding: "0 0 0 18px", fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.6 }}>
             <li>
-              click <strong>open</strong> next to a file below — it opens in your editor.
+              click <strong>open</strong> next to a file below. it opens in your editor.
             </li>
             <li>
-              inside, look for blocks that look like this — git left them right in the file to show you both
+              inside, look for blocks that look like this: git left them right in the file to show you both
               versions. watch what each choice would leave behind:
             </li>
           </ol>
@@ -316,7 +316,7 @@ export default function ConflictDialog({ repoPath, kind, target, onContinue, onA
           <ol start={3} style={{ margin: "10px 0 0", padding: "0 0 0 18px", fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.6 }}>
             <li>
               in the real file, delete whichever version you don't want, <strong>and delete all three marker lines
-              too</strong> — only your final, clean text should be left.
+              too</strong>, only your final, clean text should be left.
             </li>
             <li>save the file, come back here, and click "mark as resolved" next to it.</li>
             <li>once every file below is resolved, "continue" lights up.</li>
@@ -371,7 +371,7 @@ export default function ConflictDialog({ repoPath, kind, target, onContinue, onA
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M20 6L9 17l-5-5" />
               </svg>
-              every conflict is resolved — ready to continue.
+              every conflict is resolved, ready to continue.
             </div>
           ) : (
             files.map((f) => {
@@ -449,7 +449,7 @@ export default function ConflictDialog({ repoPath, kind, target, onContinue, onA
                         lineHeight: 1.5,
                       }}
                     >
-                      this file still has conflict markers ({"<<<<<<< / ======= / >>>>>>>"}) in it — it probably
+                      this file still has conflict markers ({"<<<<<<< / ======= / >>>>>>>"}) in it, it probably
                       isn't finished yet.
                       <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
                         <button

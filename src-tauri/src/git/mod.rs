@@ -108,7 +108,7 @@ fn run_git_full(
             success: false,
             stdout: String::new(),
             // keep this text matching looks_like_network_error below, or a timeout stop being detected as one
-            stderr: "gitroot: timed out waiting for git — the remote may be unreachable (check your network or VPN)".to_string(),
+            stderr: "gitroot: timed out waiting for git. the remote may be unreachable (check your network or VPN)".to_string(),
         });
     };
 
@@ -269,7 +269,7 @@ fn clone_repo_sync(url: String, destination_dir: String) -> Result<RepoInfo, Str
     let target = std::path::Path::new(&destination_dir).join(&name);
     if target.exists() {
         return Err(format!(
-            "\"{name}\" already exists in that folder — choose a different destination or remove it first."
+            "\"{name}\" already exists in that folder. choose a different destination or remove it first."
         ));
     }
 
@@ -280,7 +280,7 @@ fn clone_repo_sync(url: String, destination_dir: String) -> Result<RepoInfo, Str
         }
         if looks_like_network_error(&out.stderr) {
             return Err(
-                "couldn't reach that remote — check your network or VPN connection.".to_string(),
+                "couldn't reach that remote. check your network or VPN connection.".to_string(),
             );
         }
         return Err(out.stderr);

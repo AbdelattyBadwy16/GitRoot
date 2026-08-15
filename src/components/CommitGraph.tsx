@@ -243,7 +243,7 @@ export default function CommitGraph({
     <div>
       <div style={{ marginBottom: 14, display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-          hover a commit to trace its story through the graph — click any earlier one for reset or revert options
+          hover a commit to trace its story through the graph, click any earlier one for reset or revert options
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
           {hasLocalOnly && (
@@ -500,7 +500,7 @@ export default function CommitGraph({
                         : `0 0 10px 2px color-mix(in srgb, ${color} 55%, transparent)`
                       : "none",
                   }}
-                  title={commit.onRemote ? commit.hash : `${commit.hash} — not pushed yet`}
+                  title={commit.onRemote ? commit.hash : `${commit.hash} (not pushed yet)`}
                 />
 
                 <motion.div
@@ -682,7 +682,7 @@ export default function CommitGraph({
                       revert to here
                     </button>
                     <div style={{ marginTop: 4, padding: "4px 9px 2px", fontSize: 10.5, lineHeight: 1.45, color: "var(--text-muted)" }}>
-                      reset rewrites history — only safe for commits still local. revert is always safe, even if pushed, since it adds a new commit instead of erasing anything.
+                      reset rewrites history, only safe for commits still local. revert is always safe, even if pushed, since it adds a new commit instead of erasing anything.
                     </div>
                   </motion.div>
                 )}
@@ -693,7 +693,7 @@ export default function CommitGraph({
       </div>
 
       <div ref={sentinelRef} style={{ textAlign: "center", padding: "14px 0", fontSize: 12, color: "var(--text-muted)" }}>
-        {loadingMore ? "loading more history…" : !hasMore ? "— beginning of history —" : null}
+        {loadingMore ? "loading more history…" : !hasMore ? "beginning of history" : null}
       </div>
     </div>
   );

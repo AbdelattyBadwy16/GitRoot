@@ -40,7 +40,7 @@ export default function GitIdentityPrompt({ repoPath, onSaved }: GitIdentityProm
     <div style={{ padding: 16, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-1)", marginBottom: 16 }}>
       <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>git needs to know who you are</div>
       <p style={{ margin: "0 0 12px", fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.5 }}>
-        every commit is attributed to a name and email — set them once, for every repo on this machine.
+        every commit is attributed to a name and email. set them once, for every repo on this machine.
       </p>
       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="your name" onKeyDown={(e) => e.key === "Enter" && save()} style={inputStyle} />

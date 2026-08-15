@@ -27,7 +27,7 @@ export function undoConfirmText(action: UndoAction): string {
     case "pull":
       return "moves your branch back to before the pull. only works if your working directory is clean right now.";
     case "push":
-      return "reverts the commits you just pushed and pushes that revert — nothing is deleted from history, and this is safe even though it already reached the remote.";
+      return "reverts the commits you just pushed and pushes that revert. nothing is deleted from history, and this is safe even though it already reached the remote.";
     case "stash":
       return "brings back the changes you just stashed.";
     case "commit":

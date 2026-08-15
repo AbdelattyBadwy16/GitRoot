@@ -43,7 +43,7 @@ export default function DetailsPanel({ details, running, runningLabel }: Details
           </motion.div>
         ) : !details ? (
           <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.5 }}>
-            run a command to see exactly what it did — a picture of what moved, the command itself, and what changed.
+            run a command to see exactly what it did: a picture of what moved, the command itself, and what changed.
           </motion.div>
         ) : (
           <motion.div key={details.command + details.result} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
@@ -149,7 +149,7 @@ export default function DetailsPanel({ details, running, runningLabel }: Details
                     }}
                     title={details.before ?? undefined}
                   >
-                    {details.before ?? "—"}
+                    {details.before ?? "-"}
                   </div>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                     <path d="M5 12h14" />
@@ -172,7 +172,7 @@ export default function DetailsPanel({ details, running, runningLabel }: Details
                     }}
                     title={details.after ?? undefined}
                   >
-                    {details.after ?? "—"}
+                    {details.after ?? "-"}
                   </div>
                 </div>
               </Row>

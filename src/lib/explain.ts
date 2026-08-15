@@ -77,15 +77,15 @@ function resultText(kind: ActionKind, result: CommandResult): string {
   const entry = dict[kind];
   if (result.authError) return fillTemplate(entry.authError ?? "you're not logged in to reach this remote.", 0, result.data);
   if (result.networkError) {
-    return fillTemplate(entry.networkError ?? "couldn't reach {remote} — check your network or VPN connection.", 0, result.data);
+    return fillTemplate(entry.networkError ?? "couldn't reach {remote}. check your network or VPN connection.", 0, result.data);
   }
   if (result.conflict) {
-    const template = entry.conflictPaused ?? "git paused here — resolve the conflicting files, then continue.";
+    const template = entry.conflictPaused ?? "git paused here. resolve the conflicting files, then continue.";
     return fillTemplate(template, 0, result.data).replaceAll("{files}", filesList(result.data));
   }
   if (result.nonFastForward) {
     return fillTemplate(
-      entry.nonFastForward ?? "{remote} has commits you don't have yet — pull them in first, then push again.",
+      entry.nonFastForward ?? "{remote} has commits you don't have yet. pull them in first, then push again.",
       0,
       result.data,
     );
