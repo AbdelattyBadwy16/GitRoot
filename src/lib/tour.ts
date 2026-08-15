@@ -153,14 +153,4 @@ export const TOUR_STEPS: TourStep[] = [
     title: "always know where you stand",
     body: "ahead or behind your remote, clean or not — visible from any tab, no need to go looking for it.",
   },
-  {
-    id: "account-switcher",
-    title: "switching identities",
-    body: "save a few name/email profiles (with a GitHub avatar if you like) and switch between them here — handy if you use one machine for work and personal projects.",
-    example: [
-      "add a profile for each identity you use.",
-      "click one to switch — every commit from now on uses that name and email.",
-      "this only changes what your commits say, it never touches your push or pull credentials.",
-    ],
-  },
 ];

@@ -39,7 +39,7 @@ export function useUndoHistory({ repo, setBusy, applyResult, refresh, pulseHead 
   const lastUndo = undoHistory[0] ?? null;
   const undoConfirming = undoHistory.find((h) => h.id === undoConfirmingId) ?? null;
 
-  // close the history dropdown on an outside click, same pattern AccountSwitcher already uses
+  // close the history dropdown on an outside click
   useEffect(() => {
     if (!undoHistoryOpen) return;
     function onDocClick(e: MouseEvent) {
