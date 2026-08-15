@@ -1,3 +1,5 @@
+import type { CommitGraphData } from "./gitCommands";
+
 export interface TourStep {
   id: string;
   tab?: "graph" | "commit" | "branches";
@@ -6,12 +8,34 @@ export interface TourStep {
   example?: string[];
 }
 
+// stand-in history shown during the tour when the real repo has no commits yet (a brand new
+// repo) - the "graph" step's own example text talks through "5 commits, newest at the top",
+// so this is that exact story made visible, matching the same force-show-a-preview pattern
+// already used for the undo button and the merge/rebase pickers with only one branch
+export const TOUR_DEMO_GRAPH: CommitGraphData = {
+  laneCount: 1,
+  hasMore: false,
+  commits: [
+    { hash: "f4a9c21", parents: ["8e21bd4"], author: "you", date: "2h ago", message: "add login validation", refs: ["HEAD -> main"], lane: 0, row: 0, onRemote: false },
+    { hash: "8e21bd4", parents: ["3c9a012"], author: "you", date: "yesterday", message: "fix navbar spacing", refs: [], lane: 0, row: 1, onRemote: false },
+    { hash: "3c9a012", parents: ["b71e5f0"], author: "you", date: "2 days ago", message: "update dependencies", refs: ["origin/main"], lane: 0, row: 2, onRemote: true },
+    { hash: "b71e5f0", parents: ["1a2b3c4"], author: "you", date: "3 days ago", message: "add dark mode toggle", refs: [], lane: 0, row: 3, onRemote: true },
+    { hash: "1a2b3c4", parents: [], author: "you", date: "a week ago", message: "initial commit", refs: [], lane: 0, row: 4, onRemote: true },
+  ],
+  edges: [
+    { from: "f4a9c21", to: "8e21bd4", fromLane: 0, fromRow: 0, toLane: 0, toRow: 1 },
+    { from: "8e21bd4", to: "3c9a012", fromLane: 0, fromRow: 1, toLane: 0, toRow: 2 },
+    { from: "3c9a012", to: "b71e5f0", fromLane: 0, fromRow: 2, toLane: 0, toRow: 3 },
+    { from: "b71e5f0", to: "1a2b3c4", fromLane: 0, fromRow: 3, toLane: 0, toRow: 4 },
+  ],
+};
+
 export const TOUR_STEPS: TourStep[] = [
   {
     id: "graph",
     tab: "graph",
     title: "your history",
-    body: "every commit becomes a node here, connected to its parents. hover one to trace its whole thread of ancestors and descendants. click an earlier commit for reset and revert options — GitRoot only offers moves it can explain.",
+    body: "every commit becomes a node here, connected to its parents. hover one to trace its whole thread of ancestors and descendants. click an earlier commit for reset and revert options.",
     example: [
       "say your branch has 5 commits, newest at the top.",
       "you click the 2nd-oldest one and pick reset or revert.",
@@ -25,7 +49,7 @@ export const TOUR_STEPS: TourStep[] = [
     id: "tab-bar",
     tab: "graph",
     title: "getting around",
-    body: "three tabs: history (this graph), commit (staging your changes), and branches (switching, creating, merging, rebasing).",
+    body: "four tabs: history (this graph), commit (staging your changes), branches (switching, creating, merging, rebasing), and stash (see what's stashed, bring back a specific one).",
   },
   {
     id: "command-pull",
@@ -66,7 +90,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: "undo-button",
     title: "you can always undo",
-    body: "after most actions, an undo button appears in the header for a while. it reverses exactly what just happened — nothing more.",
+    body: "after most actions, an undo button appears in the header for a while. it reverses exactly what just happened. nothing more.",
     example: [
       "pulled by mistake? undo moves your branch back to before the pull.",
       "pushed something you shouldn't have? undo reverts it with a new commit, safe even though it already reached the remote.",

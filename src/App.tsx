@@ -22,7 +22,7 @@ import LearningModeToggle from "./components/LearningModeToggle";
 import GitMissingScreen from "./components/GitMissingScreen";
 import LandingPage from "./components/LandingPage";
 import Logo from "./components/Logo";
-import { TOUR_STEPS } from "./lib/tour";
+import { TOUR_STEPS, TOUR_DEMO_GRAPH } from "./lib/tour";
 import {
   openRepo,
   initRepo,
@@ -706,14 +706,24 @@ export default function App() {
               />
             ) : (
               <div data-tour="graph" style={{ padding: 20 }}>
-                <CommitGraph
-                  graph={graph}
-                  pulseHash={pulseHash}
-                  hasMore={graph.hasMore}
-                  loadingMore={loadingMoreGraph}
-                  onLoadMore={loadMoreGraph}
-                  onCommitAction={handlePickCommitAction}
-                />
+                {(() => {
+                  // an empty (brand new) repo would otherwise show "no commits yet" right
+                  // through the tour's own commit-graph walkthrough - show the demo history
+                  // that walkthrough's example text describes instead, same force-a-preview
+                  // idea already used for the undo button and merge/rebase pickers
+                  const showingDemo = touring && graph.commits.length === 0;
+                  const displayGraph = showingDemo ? TOUR_DEMO_GRAPH : graph;
+                  return (
+                    <CommitGraph
+                      graph={displayGraph}
+                      pulseHash={pulseHash}
+                      hasMore={displayGraph.hasMore}
+                      loadingMore={loadingMoreGraph}
+                      onLoadMore={loadMoreGraph}
+                      onCommitAction={showingDemo ? undefined : handlePickCommitAction}
+                    />
+                  );
+                })()}
               </div>
             )}
           </div>
