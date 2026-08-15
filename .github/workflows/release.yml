@@ -70,5 +70,7 @@ jobs:
           # lands as a draft so it can be reviewed/edited before publishing, not live the
           # instant the build finishes
           releaseDraft: true
-          prerelease: false
+          # still pre-1.0 and unsigned on Windows/Linux - flip to false once a release is
+          # actually meant to be the stable one people should reach for by default
+          prerelease: true
           args: ${{ matrix.args }}
