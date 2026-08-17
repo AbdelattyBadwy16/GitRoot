@@ -14,9 +14,19 @@ pub struct GitOutput {
 }
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(20);
+// clone/pull/push/ls-remote actually talk to a remote, so 20s is nowhere near enough for a real
+// clone of a large repo (or anything on a slow connection) - it was cutting those off early and
+// then, since the resulting "gitroot: timed out waiting for git" message itself contains "timed
+// out", looks_like_network_error was reporting it right back as "check your network or VPN" even
+// though the repo was fine and it just needed more time.
+const GIT_NETWORK_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub fn run_git(repo_path: &str, args: &[&str]) -> Result<GitOutput, String> {
     run_git_full(repo_path, args, None, GIT_TIMEOUT)
+}
+
+pub fn run_git_network(repo_path: &str, args: &[&str]) -> Result<GitOutput, String> {
+    run_git_full(repo_path, args, None, GIT_NETWORK_TIMEOUT)
 }
 
 pub fn run_git_with_stdin(
@@ -61,6 +71,17 @@ fn run_git_full(
         } else {
             Stdio::null()
         });
+
+    // git.exe is a console-subsystem executable - spawned from a windowed (non-console) app like
+    // this one, Windows pops up a brand new visible console window for it unless told not to.
+    // every single git call did that, including the ones on a 1.5s poll, which is exactly how you
+    // end up staring at a hundred blank terminal windows.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
 
     let mut child = command
         .spawn()
@@ -289,7 +310,7 @@ fn clone_repo_sync(url: String, destination_dir: String) -> Result<RepoInfo, Str
         ));
     }
 
-    let out = run_git(&destination_dir, &["clone", "--", &url, &name])?;
+    let out = run_git_network(&destination_dir, &["clone", "--", &url, &name])?;
     if !out.success {
         if looks_like_auth_error(&out.stderr) {
             return Err("you're not logged in to reach this remote.".to_string());

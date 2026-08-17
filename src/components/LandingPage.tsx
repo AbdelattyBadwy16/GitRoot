@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import Logo from "./Logo";
 import RootArt from "./RootArt";
+import { openExternal } from "../lib/gitCommands";
 
 interface LandingPageProps {
   opening: boolean;
@@ -400,6 +401,28 @@ export default function LandingPage({
               <p style={{ marginTop: 24, color: "var(--text-muted)", fontSize: 11.5 }}>
                 everything runs locally, nothing about your code leaves your machine.
               </p>
+
+              <button
+                onClick={() => openExternal("https://gitroot.pro/")}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                  marginTop: 10,
+                  padding: 0,
+                  border: "none",
+                  background: "none",
+                  color: "var(--lane-1)",
+                  fontSize: 11.5,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                }}
+              >
+                gitroot.pro
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M7 17L17 7M9 7h8v8" />
+                </svg>
+              </button>
             </div>
 
             <motion.div

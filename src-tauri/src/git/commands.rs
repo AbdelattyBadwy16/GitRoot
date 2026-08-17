@@ -1,7 +1,7 @@
 use super::{
     head_used_to_point_at, looks_like_auth_error, looks_like_network_error,
-    looks_like_no_tracking_error, looks_like_non_fast_forward_error, run_git, run_git_with_stdin,
-    GitOutput,
+    looks_like_no_tracking_error, looks_like_non_fast_forward_error, run_git, run_git_network,
+    run_git_with_stdin, GitOutput,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -190,7 +190,7 @@ fn upstream_ref(repo_path: &str) -> Option<String> {
 fn remote_branch_tip(repo_path: &str, upstream: &str) -> Option<String> {
     let (remote_name, branch) = upstream.split_once('/')?;
     let ref_name = format!("refs/heads/{branch}");
-    let out = run_git(
+    let out = run_git_network(
         repo_path,
         &["ls-remote", "--exit-code", remote_name, &ref_name],
     )
@@ -215,7 +215,7 @@ fn pull_sync(repo_path: String) -> Result<CommandResult, String> {
     let mut command = display_command(&pull_args);
 
     let before = run_git(&repo_path, &["rev-parse", "HEAD"])?.stdout;
-    let mut result = run_git(&repo_path, &pull_args)?;
+    let mut result = run_git_network(&repo_path, &pull_args)?;
 
     // no upstream configured yet (fresh repo, remote added after the fact, branch created
     // without --track...) - retry with the remote+branch spelled out explicitly, which works
@@ -225,7 +225,7 @@ fn pull_sync(repo_path: String) -> Result<CommandResult, String> {
     if !result.success && looks_like_no_tracking_error(&result.stderr) {
         let branch = super::current_branch_name(&repo_path).unwrap_or_default();
         let retry_args = ["pull", "--no-rebase", "origin", branch.as_str()];
-        let retried = run_git(&repo_path, &retry_args)?;
+        let retried = run_git_network(&repo_path, &retry_args)?;
         if retried.success {
             command = display_command(&retry_args);
             // the branch is a real ref now (it just got its first commit), so this can
@@ -324,7 +324,7 @@ fn push_sync(repo_path: String) -> Result<CommandResult, String> {
     };
     let command = display_command(&push_args);
 
-    let result = run_git(&repo_path, &push_args)?;
+    let result = run_git_network(&repo_path, &push_args)?;
 
     if !result.success {
         return Ok(CommandResult::from_remote_failure(
@@ -366,7 +366,7 @@ fn force_push_sync(repo_path: String) -> Result<CommandResult, String> {
 
     let push_args = ["push", "--force-with-lease"];
     let command = display_command(&push_args);
-    let result = run_git(&repo_path, &push_args)?;
+    let result = run_git_network(&repo_path, &push_args)?;
 
     if !result.success {
         return Ok(CommandResult::from_remote_failure(
