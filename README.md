@@ -5,7 +5,7 @@ A desktop git client that explains what it's doing, every time.
 Open a local repo and run the git commands you already know from buttons —
 pull, push, commit, stash, branch, merge, rebase, reset, revert — and after
 each one, get a plain-language explanation of what actually happened, not
-just git's raw output. Destructive commands ask first, with a real preview
+just git's raw output. Destructive commands ask first, with a real previewaa
 of what will change before you confirm.
 
 Built with [Tauri](https://tauri.app) (Rust) + React/TypeScript. See
