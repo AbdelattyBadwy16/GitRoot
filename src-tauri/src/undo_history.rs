@@ -1,17 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-// persisted per-repo, inside the repo's own .git dir - same "just fs, no plugin-store" approach
-// as settings.rs's tour marker, but scoped to the repo instead of the whole app, since undo
-// history should survive closing and reopening the app on the same repo, and follow the repo
-// if it's the thing that's still around (unlike an app-data-dir file keyed by a hash of the path)
+
 const HISTORY_FILE_NAME: &str = "gitroot-undo-history.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UndoHistoryEntry {
     pub id: String,
     pub kind: String,
-    // opaque on purpose - this is whatever shape the frontend's UndoAction union serializes
-    // to, so this module does not need to know about every action variant
     pub action: serde_json::Value,
     pub label: String,
     pub timestamp_ms: i64,
