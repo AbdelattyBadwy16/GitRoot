@@ -1,7 +1,10 @@
 [package]
 name = "gitroot"
 version = "0.2.1"
-description = "GitRoot — a desktop git client that explains what it does"
+description = "A desktop git client that explains what it's doing, every time."
+license = "MIT"
+repository = "https://github.com/AbdelattyBadwy16/GitRoot"
+homepage = "https://gitroot.pro/"
 edition = "2021"
 
 [build-dependencies]

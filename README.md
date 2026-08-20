@@ -2,51 +2,102 @@
 
 A desktop git client that explains what it's doing, every time.
 
-Open a local repo and run the git commands you already know from buttons —
-pull, push, commit, stash, branch, merge, rebase, reset, revert — and after
-each one, get a plain-language explanation of what actually happened, not
-just git's raw output. Destructive commands ask first, with a real preview
-of what will change before you confirm.
+Open a local repo and run the git commands you already reach for: pull, push,
+commit, stash, branch, merge, rebase, reset, revert, from buttons, and get a
+plain-language explanation of what actually happened after each one, not
+git's raw output. Anything that can lose work (a hard reset, a force push,
+deleting an unmerged branch) stops and shows you exactly what you'd lose
+before it touches anything.
 
-Built with [Tauri](https://tauri.app) (Rust) + React/TypeScript. See
-[DESIGN.md](DESIGN.md) for the full design rationale and technical
-decisions.
+Built with [Tauri](https://tauri.app) (Rust) + React/TypeScript.
 
-## Installing
+## How it works
 
-Grab the latest build from the [Releases page](https://github.com/AbdelattyBadwy16/GitRoot/releases/latest) — pick the file for your OS.
+- **Four tabs**: history (an animated commit graph), commit (staging, down
+  to individual lines), branches (switch/create/merge/rebase, plus conflict
+  resolution when git can't combine something automatically), and stash.
+- **A command bar** on the left for the everyday actions: pull, push,
+  stash, commit, each one click.
+- **Plain-language results**, e.g. *"pulled 3 commits from origin/main."*
+  The wording lives in a JSON dictionary
+  ([`src/lib/dictionary.json`](src/lib/dictionary.json)) owned by the
+  frontend, deliberately separate from the Rust side, so copy changes don't
+  need a recompile.
+- **Real previews before anything risky runs.** reset shows a live diagram
+  of exactly where a commit's changes will end up (staged, unstaged, or
+  discarded) for whichever mode you're about to pick; merge/rebase preview
+  their outcome before you confirm; anything already pushed gets an extra
+  warning before you rewrite it.
+- **A persistent undo history**, stored per-repo, that reverses exactly
+  what your last action did, visible in the header for a while after each
+  command.
 
-Builds aren't code-signed yet (that costs money — see below), so your OS
-will show a security warning the first time you open one. That's expected,
-not a sign anything's wrong — the source is right here if you'd rather
-check it yourself before trusting it.
+None of this is AI-generated wording at runtime. every explanation is a
+static template filled in with real values from the git command that just
+ran. See [DESIGN.md](DESIGN.md) for the original design rationale (a couple
+of specifics have evolved since: merge conflict resolution and the stash
+picker in particular went further than that doc originally scoped).
 
-**macOS** — you'll see *"Apple could not verify 'gitroot' is free of
-malware..."*. Either:
-- Terminal: `xattr -cr /path/to/gitroot.app`, then open it normally, **or**
-- System Settings → Privacy & Security → scroll down to the blocked-app
-  notice → **Open Anyway**
+## Project structure
 
-**Windows** — you'll see a blue *"Windows protected your PC"* SmartScreen
-screen. Click **More info**, then **Run anyway**. This goes away on its
-own once enough people have downloaded that build without issues.
+```
+src/
+├── App.tsx           trunk state: repo lifecycle, polling, tab switching
+├── hooks/            one hook per feature area, each owning its own state
+│                     (useBranches, useMergeRebase, useResetRevert,
+│                     useStashActions, usePausedOp, useUndoHistory, ...)
+├── components/       presentational pieces: dialogs, tabs, the graph
+└── lib/              framework-free utilities
+    ├── gitCommands.ts    typed wrappers around every Tauri `invoke` call
+    ├── dictionary.json   the plain-language explanation for every action
+    ├── explain.ts        fills the dictionary's templates in with real data
+    ├── graph.ts, diff.ts, tour.ts, undo.ts, branchName.ts, ...
 
-**Linux** — no equivalent OS-level warning. For the `.AppImage`, make it
-executable first: `chmod +x gitroot*.AppImage`, then run it directly. The
-`.deb` installs normally via `dpkg -i` or your distro's software center.
+src-tauri/src/
+├── main.rs               registers every #[tauri::command]
+├── git/
+│   ├── mod.rs             the actual subprocess runner (`run_git`), plus
+│   │                      error classification (auth/network/conflict/...)
+│   ├── commands.rs        one #[tauri::command] per git operation
+│   ├── log.rs             commit graph layout (lanes, edges, merges)
+│   └── tests/              real TestRepo fixtures. every test runs
+│                          actual git subprocesses, nothing is mocked
+├── undo_history.rs       reads/writes .git/gitroot-undo-history.json
+└── settings.rs            small per-machine settings (tour offered, etc.)
 
-*(Planning to sign the Windows build for free via [SignPath](https://signpath.io)'s
-open-source program. macOS notarization needs a paid Apple Developer
-account — $99/yr — not set up yet.)*
+.github/workflows/
+├── ci.yml         lint (fmt+clippy), typecheck, unit tests, build. on every PR
+└── release.yml    builds macOS/Windows/Linux on a `v*.*.*` tag, publishes
+                   a draft GitHub Release
+```
 
-## Developing
+## Contributing
+
+This repo is open to contributions. A few things before you open a PR:
+
+- **Every PR needs review and CI passing before it can merge.** direct
+  pushes to `main` aren't accepted. See [CONTRIBUTING.md](CONTRIBUTING.md)
+  for the full workflow, coding conventions, and what CI actually checks.
+- For anything beyond a small fix, open an issue first to talk through the
+  approach. it saves you writing code that goes a direction the project
+  isn't going in.
+- Match the app's own voice in any user-facing text you touch: lowercase,
+  plain, direct. It says *"pulled 3 commits from origin/main,"* never
+  *"seamlessly synchronizes your repository."*
+
+## Developing locally
 
 Requires [Node.js](https://nodejs.org) and [Rust](https://rustup.rs).
 
 ```bash
+git clone https://github.com/<your-username>/GitRoot.git
+cd GitRoot
 npm install
 npm run tauri dev
 ```
+
+(If you forked the repo first, which you'll need to in order to open a PR,
+swap in your fork's URL above.)
 
 Same checks CI runs, useful to run before pushing:
 
@@ -59,6 +110,38 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --bin gitroot
 ```
 
+## Installing
+
+Grab the latest build from the [Releases page](https://github.com/AbdelattyBadwy16/GitRoot/releases/latest), pick the file for your OS.
+
+Builds aren't code-signed yet (that costs money, see below), so your OS
+will show a security warning the first time you open one. That's expected,
+not a sign anything's wrong. the source is right here if you'd rather
+check it yourself before trusting it.
+
+**macOS**: you'll see *"Apple could not verify 'gitroot' is free of
+malware..."*. Either:
+- Terminal: `xattr -cr /path/to/gitroot.app`, then open it normally, **or**
+- System Settings → Privacy & Security → scroll down to the blocked-app
+  notice → **Open Anyway**
+
+**Windows**: you'll see a blue *"Windows protected your PC"* SmartScreen
+screen, or Chrome may block the download outright before you even get that
+far. For the download block: `chrome://downloads`, then the three-dot menu
+next to the blocked file, then **Keep dangerous file** (not always
+available, depends on your Safe Browsing settings). For SmartScreen: click
+**More info**, then **Run anyway**. Both ease off over time as more people
+download a build without issues, signing (in progress, see below) is the
+real fix.
+
+**Linux**: no equivalent OS-level warning. For the `.AppImage`, make it
+executable first: `chmod +x gitroot*.AppImage`, then run it directly. The
+`.deb` installs normally via `dpkg -i` or your distro's software center.
+
+*(Applied to [SignPath Foundation](https://signpath.io) for free Windows
+code signing, pending review. macOS notarization needs a paid Apple
+Developer account, $99/yr, not set up yet.)*
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).

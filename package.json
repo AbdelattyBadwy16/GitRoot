@@ -2,6 +2,14 @@
   "name": "gitroot",
   "private": true,
   "version": "0.2.1",
+  "description": "A desktop git client that explains what it's doing, every time.",
+  "license": "MIT",
+  "homepage": "https://gitroot.pro/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AbdelattyBadwy16/GitRoot.git"
+  },
+  "bugs": "https://github.com/AbdelattyBadwy16/GitRoot/issues",
   "type": "module",
   "scripts": {
     "dev": "vite",
