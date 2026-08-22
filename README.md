@@ -3,11 +3,11 @@
 A desktop git client that explains what it's doing, every time.
 
 Open a local repo and run the git commands you already reach for: pull, push,
-commit, stash, branch, merge, rebase, reset, revert, from buttons, and get a
-plain-language explanation of what actually happened after each one, not
-git's raw output. Anything that can lose work (a hard reset, a force push,
-deleting an unmerged branch) stops and shows you exactly what you'd lose
-before it touches anything.
+commit, stash, branch, merge, rebase, reset, revert. All from buttons. After
+each one you get a plain-language explanation of what actually happened,
+not git's raw output. Anything that can lose work (a hard reset, a force
+push, deleting an unmerged branch) stops first and shows you exactly what
+you'd lose before it touches anything.
 
 Built with [Tauri](https://tauri.app) (Rust) + React/TypeScript.
 
@@ -21,22 +21,22 @@ Built with [Tauri](https://tauri.app) (Rust) + React/TypeScript.
 - **Plain-language results**, e.g. *"pulled 3 commits from origin/main."*
   The wording lives in a JSON dictionary
   ([`src/lib/dictionary.json`](src/lib/dictionary.json)) owned by the
-  frontend, deliberately separate from the Rust side, so copy changes don't
-  need a recompile.
-- **Real previews before anything risky runs.** reset shows a live diagram
+  frontend, kept separate from the Rust side so copy changes don't need a
+  recompile.
+- **Real previews before anything risky runs.** Reset shows a live diagram
   of exactly where a commit's changes will end up (staged, unstaged, or
-  discarded) for whichever mode you're about to pick; merge/rebase preview
-  their outcome before you confirm; anything already pushed gets an extra
-  warning before you rewrite it.
+  discarded) for whichever mode you're about to pick. Merge and rebase
+  preview their outcome before you confirm. Anything already pushed gets
+  an extra warning before you rewrite it.
 - **A persistent undo history**, stored per-repo, that reverses exactly
-  what your last action did, visible in the header for a while after each
-  command.
+  what your last action did. It stays visible in the header for a while
+  after each command.
 
-None of this is AI-generated wording at runtime. every explanation is a
+None of this is AI-generated wording at runtime. Every explanation is a
 static template filled in with real values from the git command that just
-ran. See [DESIGN.md](DESIGN.md) for the original design rationale (a couple
-of specifics have evolved since: merge conflict resolution and the stash
-picker in particular went further than that doc originally scoped).
+ran. See [DESIGN.md](DESIGN.md) for the original design notes (a couple of
+things have changed since: merge conflict resolution and the stash picker
+both ended up going further than that doc originally planned).
 
 ## Project structure
 
@@ -75,11 +75,12 @@ src-tauri/src/
 
 This repo is open to contributions. A few things before you open a PR:
 
-- **Every PR needs review and CI passing before it can merge.** direct
-  pushes to `main` aren't accepted. See [CONTRIBUTING.md](CONTRIBUTING.md)
-  for the full workflow, coding conventions, and what CI actually checks.
-- For anything beyond a small fix, open an issue first to talk through the
-  approach. it saves you writing code that goes a direction the project
+- **Every PR needs review and a passing CI run before it can merge.**
+  Direct pushes to `main` aren't accepted. See
+  [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow, coding
+  conventions, and what CI actually checks.
+- For anything beyond a small fix, open an issue first and talk through
+  the approach. Saves you writing code that goes a direction the project
   isn't going in.
 - Match the app's own voice in any user-facing text you touch: lowercase,
   plain, direct. It says *"pulled 3 commits from origin/main,"* never
@@ -96,10 +97,10 @@ npm install
 npm run tauri dev
 ```
 
-(If you forked the repo first, which you'll need to in order to open a PR,
-swap in your fork's URL above.)
+(If you forked the repo first, which you'll need to do to open a PR, swap
+in your fork's URL above.)
 
-Same checks CI runs, useful to run before pushing:
+Same checks CI runs, worth running before you push:
 
 ```bash
 npx tsc --noEmit && npm run build
@@ -112,12 +113,12 @@ cargo test --bin gitroot
 
 ## Installing
 
-Grab the latest build from the [Releases page](https://github.com/AbdelattyBadwy16/GitRoot/releases/latest), pick the file for your OS.
+Grab the latest build from the [Releases page](https://github.com/AbdelattyBadwy16/GitRoot/releases/latest) and pick the file for your OS.
 
 Builds aren't code-signed yet (that costs money, see below), so your OS
-will show a security warning the first time you open one. That's expected,
-not a sign anything's wrong. the source is right here if you'd rather
-check it yourself before trusting it.
+will show a security warning the first time you open one. That's expected.
+It doesn't mean anything's wrong, and the source is right here if you'd
+rather check it yourself before trusting it.
 
 **macOS**: you'll see *"Apple could not verify 'gitroot' is free of
 malware..."*. Either:
@@ -126,13 +127,13 @@ malware..."*. Either:
   notice → **Open Anyway**
 
 **Windows**: you'll see a blue *"Windows protected your PC"* SmartScreen
-screen, or Chrome may block the download outright before you even get that
-far. For the download block: `chrome://downloads`, then the three-dot menu
-next to the blocked file, then **Keep dangerous file** (not always
-available, depends on your Safe Browsing settings). For SmartScreen: click
-**More info**, then **Run anyway**. Both ease off over time as more people
-download a build without issues, signing (in progress, see below) is the
-real fix.
+screen, or Chrome may block the download outright before you even get
+that far. For the download block: open `chrome://downloads`, use the
+three-dot menu next to the blocked file, then **Keep dangerous file**
+(not always available, depends on your Safe Browsing settings). For
+SmartScreen: click **More info**, then **Run anyway**. Both warnings ease
+off over time as more people download a build without issues. Signing
+(in progress, see below) is the real fix.
 
 **Linux**: no equivalent OS-level warning. For the `.AppImage`, make it
 executable first: `chmod +x gitroot*.AppImage`, then run it directly. The
