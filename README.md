@@ -1,5 +1,7 @@
 # GitRoot
 
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/jV3UE3zMJ)
+
 A desktop git client that explains what it's doing, every time.
 
 Open a local repo and run the git commands you already reach for: pull, push,
