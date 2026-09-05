@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-
 const HISTORY_FILE_NAME: &str = "gitroot-undo-history.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
