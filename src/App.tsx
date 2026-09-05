@@ -452,8 +452,37 @@ export default function App() {
       }
     };
 
-    const interval = window.setInterval(tick, 1500);
-    return () => window.clearInterval(interval);
+    // only poll while the window actually has OS focus - no point burning wakeups (and, on
+    // battery, keeping the CPU from dropping into a deeper sleep state) checking a repo nobody
+    // is looking at
+    let interval: number | null = null;
+    const start = () => {
+      if (interval !== null) return;
+      interval = window.setInterval(tick, 1500);
+    };
+    const stop = () => {
+      if (interval === null) return;
+      window.clearInterval(interval);
+      interval = null;
+    };
+
+    if (document.hasFocus()) start();
+
+    const onFocus = () => {
+      start();
+      // catch up right away instead of waiting up to 1.5s for whatever changed while unfocused
+      void tick();
+    };
+    const onBlur = () => stop();
+
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+
+    return () => {
+      stop();
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
+    };
   }, [repo]);
 
   if (gitAvailable === null) return null;
