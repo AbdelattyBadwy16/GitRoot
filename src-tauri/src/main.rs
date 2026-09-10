@@ -62,6 +62,7 @@ fn main() {
             git::commands::discard_hunk_lines,
             git::commands::unstage_hunk_lines,
             git::log::commit_graph,
+            git::raw::run_raw_command,
             git::open_repo,
             git::init_repo,
             git::clone_repo,
