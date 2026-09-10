@@ -3,8 +3,6 @@ import { runRawCommand, type RawCommandOutput } from "../lib/gitCommands";
 
 interface CommandInputProps {
   repoPath: string;
-  // called after every command, success or failure - a raw command can change basically
-  // anything, so the parent just re-fetches everything rather than trying to guess what moved
   onRan: () => void;
 }
 
@@ -17,22 +15,17 @@ const MIN_OUTPUT_HEIGHT = 60;
 const MAX_OUTPUT_HEIGHT = 600;
 const DEFAULT_OUTPUT_HEIGHT = 220;
 
-// the power-user escape hatch: a fixed line at the bottom of the window, present no matter which
-// tab is open. anything typed here runs as `git <input>` directly, with no confirmation and no
-// "what this does" explanation - the opposite of the rest of the app on purpose.
 export default function CommandInput({ repoPath, onRan }: CommandInputProps) {
   const [value, setValue] = useState("");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [running, setRunning] = useState(false);
-  // index into history while recalling past commands with the arrow keys, like a real shell
   const [navIndex, setNavIndex] = useState<number | null>(null);
   const [outputHeight, setOutputHeight] = useState(DEFAULT_OUTPUT_HEIGHT);
   const [dragging, setDragging] = useState(false);
   const dragStartRef = useRef({ y: 0, height: DEFAULT_OUTPUT_HEIGHT });
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // a different repo means this scrollback belongs to somewhere else entirely
   useEffect(() => {
     setHistory([]);
     setValue("");
@@ -44,10 +37,6 @@ export default function CommandInput({ repoPath, onRan }: CommandInputProps) {
     if (expanded && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [history, expanded]);
 
-  // the panel sits above the input at the bottom of the window, so "drag up to grow it" means
-  // the top edge has to move while the bottom edge (next to the input) stays put - that's not
-  // something CSS's own `resize` handle can do (it only grows from the bottom-right corner), so
-  // this tracks the drag by hand
   useEffect(() => {
     if (!dragging) return;
     function onMove(e: MouseEvent) {
@@ -148,7 +137,6 @@ export default function CommandInput({ repoPath, onRan }: CommandInputProps) {
               fontSize: 12,
               borderBottom: "1px solid var(--border)",
               background: "var(--surface-0)",
-              // no transition while actively dragging - it would lag a frame behind the mouse
               transition: dragging ? "none" : "height 0.1s",
             }}
           >

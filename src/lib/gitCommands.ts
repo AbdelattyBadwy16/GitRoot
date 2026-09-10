@@ -472,8 +472,6 @@ export async function markTourOffered(): Promise<void> {
   await invoke("mark_tour_offered");
 }
 
-// ===== raw command input =====
-
 export interface RawCommandOutput {
   command: string;
   success: boolean;

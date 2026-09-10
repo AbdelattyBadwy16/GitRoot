@@ -1,23 +1,14 @@
 use super::{run_git, run_git_network};
 use serde::Serialize;
 
-// the power-user escape hatch: a fixed input at the bottom of the window where anything typed
-// runs as `git <input>` directly against the open repo, no confirmation, no interpretation -
-// exactly what a real terminal would do. everything else in this app goes through a specific,
-// explained command; this is deliberately the opposite of that.
-
 #[derive(Debug, Serialize)]
 pub struct RawCommandOutput {
-    // "git " + whatever was typed, unmodified - not re-quoted or reformatted, so what the user
-    // sees echoed back is exactly what they typed
     pub command: String,
     pub success: bool,
     pub stdout: String,
     pub stderr: String,
 }
 
-// subcommands that talk to a remote - these get the long network timeout the rest of the app
-// already uses for pull/push/clone/etc, instead of the 20s one meant for local operations
 const NETWORK_SUBCOMMANDS: [&str; 6] = ["fetch", "pull", "push", "clone", "ls-remote", "remote"];
 
 #[tauri::command]
@@ -55,8 +46,6 @@ fn run_raw_command_sync(repo_path: String, input: String) -> Result<RawCommandOu
     })
 }
 
-// hand-rolled, not a full POSIX shell - just enough for the common case a plain whitespace split
-// can't handle: a quoted argument (almost always a commit/tag message) containing spaces
 fn tokenize(input: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
