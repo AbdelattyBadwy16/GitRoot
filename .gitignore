@@ -25,3 +25,8 @@ desktop.ini
 # Logs
 *.log
 npm-debug.log*
+
+# Tauri updater signing keypair - private half must never be committed, only the public key
+# (copied into tauri.conf.json) and the GitHub secret it's uploaded to are meant to leave this machine
+*.key
+*.key.pub

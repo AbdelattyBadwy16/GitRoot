@@ -32,6 +32,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/AbdelattyBadwy16/GitRoot/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE0QjM3NUE2NERDOUQxMUYKUldRZjBjbE5wbld6Rk1RVWo5cGIrYXFadVR6Mm1sM3RwcWdMU09JQi9XdkxmOFNyS2ZFdlRWMVIK"
+    }
   }
 }
