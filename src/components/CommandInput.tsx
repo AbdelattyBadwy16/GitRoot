@@ -13,6 +13,9 @@ interface HistoryEntry extends RawCommandOutput {
 }
 
 const MAX_HISTORY = 50;
+const MIN_OUTPUT_HEIGHT = 60;
+const MAX_OUTPUT_HEIGHT = 600;
+const DEFAULT_OUTPUT_HEIGHT = 220;
 
 // the power-user escape hatch: a fixed line at the bottom of the window, present no matter which
 // tab is open. anything typed here runs as `git <input>` directly, with no confirmation and no
@@ -24,6 +27,9 @@ export default function CommandInput({ repoPath, onRan }: CommandInputProps) {
   const [running, setRunning] = useState(false);
   // index into history while recalling past commands with the arrow keys, like a real shell
   const [navIndex, setNavIndex] = useState<number | null>(null);
+  const [outputHeight, setOutputHeight] = useState(DEFAULT_OUTPUT_HEIGHT);
+  const [dragging, setDragging] = useState(false);
+  const dragStartRef = useRef({ y: 0, height: DEFAULT_OUTPUT_HEIGHT });
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // a different repo means this scrollback belongs to somewhere else entirely
@@ -37,6 +43,34 @@ export default function CommandInput({ repoPath, onRan }: CommandInputProps) {
   useEffect(() => {
     if (expanded && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [history, expanded]);
+
+  // the panel sits above the input at the bottom of the window, so "drag up to grow it" means
+  // the top edge has to move while the bottom edge (next to the input) stays put - that's not
+  // something CSS's own `resize` handle can do (it only grows from the bottom-right corner), so
+  // this tracks the drag by hand
+  useEffect(() => {
+    if (!dragging) return;
+    function onMove(e: MouseEvent) {
+      const movedUp = dragStartRef.current.y - e.clientY;
+      setOutputHeight(Math.min(MAX_OUTPUT_HEIGHT, Math.max(MIN_OUTPUT_HEIGHT, dragStartRef.current.height + movedUp)));
+    }
+    function onUp() {
+      setDragging(false);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [dragging]);
+
+  function startDrag(e: React.MouseEvent) {
+    e.preventDefault();
+    dragStartRef.current = { y: e.clientY, height: outputHeight };
+    if (!expanded && history.length > 0) setExpanded(true);
+    setDragging(true);
+  }
 
   async function run() {
     const input = value.trim();
@@ -83,61 +117,83 @@ export default function CommandInput({ repoPath, onRan }: CommandInputProps) {
   }
 
   return (
-    <div style={{ borderTop: "1px solid var(--border)", background: "var(--surface-1)", flexShrink: 0 }}>
-      {expanded && history.length > 0 && (
+    <div style={{ background: "var(--surface-1)", flexShrink: 0 }}>
+      {history.length > 0 && (
         <div
-          ref={scrollRef}
+          onMouseDown={startDrag}
+          title="drag to resize"
           style={{
-            maxHeight: 220,
-            overflowY: "auto",
-            padding: "10px 14px",
-            fontFamily: "ui-monospace, monospace",
-            fontSize: 12,
-            borderBottom: "1px solid var(--border)",
-            background: "var(--surface-0)",
+            height: 6,
+            marginTop: -3,
+            cursor: "ns-resize",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            position: "relative",
+            zIndex: 1,
           }}
         >
-          {history.map((h) => (
-            <div key={h.id} style={{ marginBottom: 10 }}>
-              <div style={{ color: "var(--text-muted)" }}>$ {h.command}</div>
-              {h.stdout && <div style={{ whiteSpace: "pre-wrap", color: "var(--text-primary)" }}>{h.stdout}</div>}
-              {h.stderr && <div style={{ whiteSpace: "pre-wrap", color: h.success ? "var(--text-muted)" : "var(--danger)" }}>{h.stderr}</div>}
-            </div>
-          ))}
+          <div style={{ width: 36, height: 3, borderRadius: 999, background: dragging ? "var(--accent)" : "var(--border-strong)" }} />
         </div>
       )}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 14px" }}>
-        <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 12.5, color: "var(--text-muted)", flexShrink: 0 }}>git</span>
-        <input
-          value={value}
-          onChange={(e) => {
-            setValue(e.target.value);
-            setNavIndex(null);
-          }}
-          onKeyDown={onKeyDown}
-          onFocus={() => history.length > 0 && setExpanded(true)}
-          disabled={running}
-          placeholder="type a git command and press enter…"
-          style={{
-            flex: 1,
-            minWidth: 0,
-            border: "none",
-            outline: "none",
-            background: "none",
-            fontFamily: "ui-monospace, monospace",
-            fontSize: 12.5,
-            color: "var(--text-primary)",
-            padding: "5px 0",
-          }}
-        />
-        {history.length > 0 && (
-          <button
-            onClick={() => setExpanded((v) => !v)}
-            style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 11, cursor: "pointer", flexShrink: 0 }}
+      <div style={{ borderTop: "1px solid var(--border)" }}>
+        {expanded && history.length > 0 && (
+          <div
+            ref={scrollRef}
+            style={{
+              height: outputHeight,
+              overflowY: "auto",
+              padding: "10px 14px",
+              fontFamily: "ui-monospace, monospace",
+              fontSize: 12,
+              borderBottom: "1px solid var(--border)",
+              background: "var(--surface-0)",
+              // no transition while actively dragging - it would lag a frame behind the mouse
+              transition: dragging ? "none" : "height 0.1s",
+            }}
           >
-            {expanded ? "hide output" : "show output"}
-          </button>
+            {history.map((h) => (
+              <div key={h.id} style={{ marginBottom: 10 }}>
+                <div style={{ color: "var(--text-muted)" }}>$ {h.command}</div>
+                {h.stdout && <div style={{ whiteSpace: "pre-wrap", color: "var(--text-primary)" }}>{h.stdout}</div>}
+                {h.stderr && <div style={{ whiteSpace: "pre-wrap", color: h.success ? "var(--text-muted)" : "var(--danger)" }}>{h.stderr}</div>}
+              </div>
+            ))}
+          </div>
         )}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 14px" }}>
+          <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 12.5, color: "var(--text-muted)", flexShrink: 0 }}>git</span>
+          <input
+            value={value}
+            onChange={(e) => {
+              setValue(e.target.value);
+              setNavIndex(null);
+            }}
+            onKeyDown={onKeyDown}
+            onFocus={() => history.length > 0 && setExpanded(true)}
+            disabled={running}
+            placeholder="type a git command and press enter…"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              border: "none",
+              outline: "none",
+              background: "none",
+              fontFamily: "ui-monospace, monospace",
+              fontSize: 12.5,
+              color: "var(--text-primary)",
+              padding: "5px 0",
+            }}
+          />
+          {history.length > 0 && (
+            <button
+              onClick={() => setExpanded((v) => !v)}
+              style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 11, cursor: "pointer", flexShrink: 0 }}
+            >
+              {expanded ? "hide output" : "show output"}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
