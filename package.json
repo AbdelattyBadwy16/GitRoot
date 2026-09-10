@@ -1,7 +1,7 @@
 {
   "name": "gitroot",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "A desktop git client that explains what it's doing, every time.",
   "license": "MIT",
   "homepage": "https://gitroot.pro/",
