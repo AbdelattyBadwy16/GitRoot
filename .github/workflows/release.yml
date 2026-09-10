@@ -64,13 +64,20 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
           releaseName: "GitRoot v__VERSION__"
           # lands as a draft so it can be reviewed/edited before publishing, not live the
-          # instant the build finishes
+          # instant the build finishes - this is also where prerelease gets the final call: the
+          # box is unchecked by default (see below) but still sits right there in the same
+          # GitHub review screen to tick before hitting Publish, for any run that isn't meant to
+          # be the one the updater/"latest" URL point at
           releaseDraft: true
-          # still pre-1.0 and unsigned on Windows/Linux - flip to false once a release is
-          # actually meant to be the stable one people should reach for by default
-          prerelease: true
+          # unchecked by default - if this stayed true, the release could never be reached by
+          # GitHub's "latest" release (which skips prereleases), and the updater endpoint used by
+          # the app resolves through exactly that URL. reviewing the draft before Publish is the
+          # place to flip a specific release back to prerelease, not this default.
+          prerelease: false
           args: ${{ matrix.args }}

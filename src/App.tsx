@@ -22,6 +22,8 @@ import BranchStatusBadge from "./components/BranchStatusBadge";
 import LearningModeToggle from "./components/LearningModeToggle";
 import GitMissingScreen from "./components/GitMissingScreen";
 import LandingPage from "./components/LandingPage";
+import UpdatePrompt from "./components/UpdatePrompt";
+import { getVersion } from "@tauri-apps/api/app";
 import Logo from "./components/Logo";
 import { TOUR_STEPS, TOUR_DEMO_GRAPH } from "./lib/tour";
 import {
@@ -69,6 +71,7 @@ import { loadLearningMode, saveLearningMode } from "./lib/learningMode";
 import { UNDO_LABEL, computeUndo, undoConfirmText, relativeTime } from "./lib/undo";
 import { usePreviewFiles } from "./hooks/usePreviewFiles";
 import { useUndoHistory } from "./hooks/useUndoHistory";
+import { useAppUpdate } from "./hooks/useAppUpdate";
 import { useBranches } from "./hooks/useBranches";
 import { usePausedOp } from "./hooks/usePausedOp";
 import { useStashActions } from "./hooks/useStashActions";
@@ -116,6 +119,8 @@ export default function App() {
   const [showCloneInput, setShowCloneInput] = useState(false);
   const [cloneUrl, setCloneUrl] = useState("");
   const [cloning, setCloning] = useState(false);
+
+  const appUpdate = useAppUpdate();
 
   async function refresh(path: string, limit: number = graphLimit): Promise<CommitGraphData> {
     const [g, s, b, st] = await Promise.all([getCommitGraph(path, limit), getStatus(path), listBranches(path), listStashes(path)]);
@@ -497,30 +502,42 @@ export default function App() {
   }
 
   if (!repo) {
-    return <LandingPage
-      opening={opening}
-      openError={openError}
-      showManualInput={showManualInput}
-      pathInput={pathInput}
-      onBrowse={handleBrowse}
-      onToggleManualInput={() => setShowManualInput((v) => !v)}
-      onPathInputChange={setPathInput}
-      onManualOpen={() => openAt(pathInput.trim())}
-      notGitFolderPath={notGitFolderPath}
-      initRemoteUrl={initRemoteUrl}
-      onInitRemoteUrlChange={setInitRemoteUrl}
-      onInit={handleInit}
-      onCancelInit={() => {
-        setNotGitFolderPath(null);
-        setInitRemoteUrl("");
-      }}
-      showCloneInput={showCloneInput}
-      onToggleCloneInput={() => setShowCloneInput((v) => !v)}
-      cloneUrl={cloneUrl}
-      onCloneUrlChange={setCloneUrl}
-      onClone={handleClone}
-      cloning={cloning}
-    />;
+    return (
+      <>
+        <LandingPage
+          opening={opening}
+          openError={openError}
+          showManualInput={showManualInput}
+          pathInput={pathInput}
+          onBrowse={handleBrowse}
+          onToggleManualInput={() => setShowManualInput((v) => !v)}
+          onPathInputChange={setPathInput}
+          onManualOpen={() => openAt(pathInput.trim())}
+          notGitFolderPath={notGitFolderPath}
+          initRemoteUrl={initRemoteUrl}
+          onInitRemoteUrlChange={setInitRemoteUrl}
+          onInit={handleInit}
+          onCancelInit={() => {
+            setNotGitFolderPath(null);
+            setInitRemoteUrl("");
+          }}
+          showCloneInput={showCloneInput}
+          onToggleCloneInput={() => setShowCloneInput((v) => !v)}
+          cloneUrl={cloneUrl}
+          onCloneUrlChange={setCloneUrl}
+          onClone={handleClone}
+          cloning={cloning}
+        />
+        <UpdatePrompt
+          update={appUpdate.update}
+          dismissed={appUpdate.dismissed}
+          installing={appUpdate.installing}
+          error={appUpdate.error}
+          onDismiss={appUpdate.dismiss}
+          onInstall={appUpdate.install}
+        />
+      </>
+    );
   }
 
   const currentBranchInfo = branches.find((b) => b.isCurrent) ?? null;
@@ -542,6 +559,14 @@ export default function App() {
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <Logo size={26} glow />
+          <VersionBadge
+            hasUpdate={appUpdate.update !== null}
+            checking={appUpdate.checking}
+            upToDateFlash={appUpdate.upToDateFlash}
+            error={appUpdate.update ? null : appUpdate.error}
+            onCheck={appUpdate.checkNow}
+            onReopen={appUpdate.reopen}
+          />
           <div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
               <strong style={{ fontSize: 14 }}>{repo.name}</strong>
@@ -1011,6 +1036,15 @@ export default function App() {
           onFinish={() => setTourStep(null)}
         />
       )}
+
+      <UpdatePrompt
+        update={appUpdate.update}
+        dismissed={appUpdate.dismissed}
+        installing={appUpdate.installing}
+        error={appUpdate.error}
+        onDismiss={appUpdate.dismiss}
+        onInstall={appUpdate.install}
+      />
     </div>
   );
 }
@@ -1021,5 +1055,130 @@ function UndoIcon() {
       <path d="M3 10h10a5 5 0 0 1 0 10H8" />
       <path d="M7 5L3 10l4 5" />
     </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 6L9 17l-5-5" />
+    </svg>
+  );
+}
+
+function ErrorIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 8v5" />
+      <path d="M12 17h.01" />
+    </svg>
+  );
+}
+
+interface VersionBadgeProps {
+  hasUpdate: boolean;
+  checking: boolean;
+  upToDateFlash: boolean;
+  error: string | null;
+  onCheck: () => void;
+  onReopen: () => void;
+}
+
+// the version number doubles as the "check for updates" control - hovering just tints it (it's
+// always there, always clickable), but it stays visually silent otherwise. the only thing that
+// makes it stand out on its own is a real pending update: a lit amber ring + a slow pulsing dot,
+// so the nudge is the version number lighting up, not a separate icon competing for attention.
+// a manual check that found nothing, or one that failed, gets a brief 2s flash instead of a
+// permanent mark - that state isn't something to keep drawing the eye to.
+function VersionBadge({ hasUpdate, checking, upToDateFlash, error, onCheck, onReopen }: VersionBadgeProps) {
+  const [version, setVersion] = useState<string | null>(null);
+  const [hovered, setHovered] = useState(false);
+
+  useEffect(() => {
+    getVersion()
+      .then(setVersion)
+      .catch(() => {});
+  }, []);
+
+  if (!version) return null;
+  // no real "channel" concept here - pre-1.0 is the project's own working definition of beta,
+  // called out the same way elsewhere (see release.yml)
+  const isBeta = version.startsWith("0.");
+  const errorFlash = !!error && !hasUpdate;
+  const title = hasUpdate
+    ? `gitroot ${version} - update available, click to view`
+    : upToDateFlash
+      ? "you're up to date"
+      : errorFlash
+        ? `check failed: ${error}`
+        : "click to check for updates";
+
+  return (
+    <div style={{ position: "relative" }}>
+      <button
+        onClick={hasUpdate ? onReopen : onCheck}
+        disabled={checking}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        title={title}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 5,
+          border: `1px solid ${hasUpdate ? "var(--lane-4)" : "var(--border)"}`,
+          borderRadius: 999,
+          padding: "2px 9px",
+          background: hasUpdate
+            ? "color-mix(in srgb, var(--lane-4) 14%, var(--surface-1))"
+            : hovered
+              ? "var(--surface-2)"
+              : "none",
+          color: hasUpdate ? "var(--lane-4)" : "var(--text-muted)",
+          fontSize: 11,
+          fontWeight: 600,
+          cursor: checking ? "default" : "pointer",
+          opacity: checking ? 0.5 : 1,
+          transition: "background 0.15s, border-color 0.15s, color 0.15s",
+        }}
+      >
+        v{version}
+        {isBeta && (
+          <span
+            style={{
+              fontSize: 9.5,
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: 0.4,
+              color: "var(--lane-5)",
+              background: "color-mix(in srgb, var(--lane-5) 16%, var(--surface-1))",
+              border: "1px solid color-mix(in srgb, var(--lane-5) 40%, transparent)",
+              borderRadius: 999,
+              padding: "1px 5px",
+            }}
+          >
+            beta
+          </span>
+        )}
+        {upToDateFlash && <CheckIcon />}
+        {errorFlash && <ErrorIcon />}
+      </button>
+      {hasUpdate && !checking && (
+        <motion.span
+          animate={{ scale: [1, 1.35, 1], opacity: [1, 0.55, 1] }}
+          transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
+          style={{
+            position: "absolute",
+            top: -2,
+            right: -2,
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            background: "var(--lane-4)",
+            boxShadow: "0 0 6px 1px color-mix(in srgb, var(--lane-4) 55%, transparent)",
+            pointerEvents: "none",
+          }}
+        />
+      )}
+    </div>
   );
 }
