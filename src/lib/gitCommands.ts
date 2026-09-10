@@ -471,3 +471,16 @@ export async function checkTourOffered(): Promise<boolean> {
 export async function markTourOffered(): Promise<void> {
   await invoke("mark_tour_offered");
 }
+
+// ===== raw command input =====
+
+export interface RawCommandOutput {
+  command: string;
+  success: boolean;
+  stdout: string;
+  stderr: string;
+}
+
+export async function runRawCommand(repoPath: string, input: string): Promise<RawCommandOutput> {
+  return invoke("run_raw_command", { repoPath, input });
+}

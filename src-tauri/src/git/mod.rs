@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod log;
+pub mod raw;
 
 use serde::Serialize;
 use std::io::{Read, Write};

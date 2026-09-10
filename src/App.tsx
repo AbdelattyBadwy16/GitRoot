@@ -23,6 +23,7 @@ import LearningModeToggle from "./components/LearningModeToggle";
 import GitMissingScreen from "./components/GitMissingScreen";
 import LandingPage from "./components/LandingPage";
 import UpdatePrompt from "./components/UpdatePrompt";
+import CommandInput from "./components/CommandInput";
 import { getVersion } from "@tauri-apps/api/app";
 import Logo from "./components/Logo";
 import { TOUR_STEPS, TOUR_DEMO_GRAPH } from "./lib/tour";
@@ -834,6 +835,8 @@ export default function App() {
           />
         )}
       </div>
+
+      <CommandInput repoPath={repo.path} onRan={() => refresh(repo.path)} />
 
       <AnimatePresence>
         {revertTarget && (
